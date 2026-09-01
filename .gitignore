@@ -1,0 +1,12 @@
+node_modules/
+.next/
+coverage/
+data/*.db
+data/*.db-*
+backups/
+caches/*
+!caches/.gitkeep
+__pycache__/
+*.py[cod]
+.env*
+!.env.example
