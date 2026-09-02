@@ -1,138 +1,109 @@
-# 量化选股工具概要设计
+# 系统架构
 
-## 1. 设计原则
+## 1. 架构概览
 
-系统以“数据优先、计算统一、界面与计算解耦”为原则。行情数据是所有筛选功能的基础，因此数据同步、前复权一致性、校验、版本与备份优先于规则数量和页面效果。
-
-首期采用单机本地 Web 应用：浏览器作为操作界面，Next.js 服务、Python Quant Worker 和 SQLite 数据库均运行在本机。该形态无需部署独立数据库服务，足以承载约 35 万行 70 日日线数据。Python 计算层从首期就参与，不将核心量化逻辑临时放在 TypeScript 中。
-
-## 2. 技术栈
-
-| 层级 | 技术 | 责任 |
-|---|---|---|
-| Web 与 API | Next.js + TypeScript | 页面渲染、Route Handlers、任务发起、结果查询 |
-| 数据库访问 | Drizzle ORM + SQLite 驱动 | 模型、迁移、事务、类型安全查询与批量 SQL |
-| 数据库 | SQLite（WAL 模式） | 本地日线、指标、任务、规则、结果与审计日志 |
-| 量化计算 | Python Quant Worker | 行情同步、前复权、指标计算、全市场筛选、备份 |
-| 图表 | ECharts | K 线、成交量、均线、DKX、同步状态 |
-| 测试 | pytest + Vitest + Playwright | 量化公式、数据一致性、前端与界面流程 |
-| 后续能力 | Python Quant Worker 扩展模块 | 回测、因子研究、组合优化、机器学习 |
-
-## 3. 总体架构
+项目以单机本地部署为目标。浏览器只与 Next.js 通信；Next.js 负责页面、HTTP API、任务创建和结果读取；Python Worker 负责耗时的数据与计算工作；两端通过同一个 SQLite 数据库和文件化收藏方案协作。
 
 ```text
 浏览器
-  │  数据管理 / 条件编辑 / 盘中或盘后筛选 / 图表
+  │
   ▼
-Next.js Application
-  ├─ App Router 页面
-  ├─ Route Handlers（短请求：读取、创建任务、查询结果）
-  ├─ Rule Service（规则校验与编译）
-  └─ Job Service（任务持久化与状态查询）
-              │
-              ▼
+Next.js App Router
+  ├─ 页面：主页、股票浏览、个股页
+  ├─ 组件：条件编辑、条件选择、结果、本地 K 线、弹窗
+  ├─ Route Handlers：状态、任务、筛选、股票、收藏
+  └─ SQLite 读取 / 创建任务
+          │
+          ▼
 Python Quant Worker
-  ├─ Universe Service（非 ST 股票池）
-  ├─ Market Data Provider（主源、备用源、标准化）
-  ├─ Daily Sync Service（补采、校验、滚动保留）
-  ├─ Realtime Quote Service（实时快照、前复权转换）
-  ├─ Indicator Engine（MA、DKX）
-  └─ Screening Engine（规则执行、结果快照）
-              │
-              ▼
-SQLite
-  ├─ 股票池 / 日线 / 指标 / 实时快照
-  ├─ 规则 / 筛选结果 / 后台任务
-  └─ 数据来源 / 校验 / 同步审计 / 备份元数据
+  ├─ 行情 Provider 与同步
+  ├─ 前复权重建与指标计算
+  ├─ 自定义条件与预设策略执行
+  └─ 写入任务状态和筛选结果
+          │
+          ▼
+SQLite + 收藏 JSON 文件
 ```
 
-Python Worker 不经由页面直接访问，而是读取同一任务与数据库契约：Next.js 创建任务，Python 执行计算并写入结果表，Next.js 负责展示。这避免语言混用扩散到 UI 层。
+## 2. 技术边界
 
-## 4. 核心数据流
+| 层       | 技术                           | 职责                               |
+| -------- | ------------------------------ | ---------------------------------- |
+| Web      | Next.js 15、React、TypeScript  | 页面渲染、交互、Route Handlers     |
+| 数据访问 | better-sqlite3、Drizzle schema | SQLite 读取、迁移定义              |
+| 计算     | Python 3.12 Quant Worker       | 同步、复权、指标、筛选任务         |
+| 数据库   | SQLite                         | 证券、日线、指标、任务、筛选结果   |
+| 图表     | 原生 SVG                       | 本地 K 线、均线、DKX、成交量及交互 |
+| 外部跳转 | 同花顺个股页                   | 仅新标签页跳转，不嵌入 iframe      |
 
-### 4.1 历史日线初始化与增量更新
+前端不得在浏览器内计算指标或执行全市场筛选；Python 不承担页面渲染。这样可避免规则公式在两端分叉。
 
-1. Worker 刷新证券主数据，建立非 ST、普通 A 股股票池。
-2. 对每只可筛选股票查询本地覆盖情况。
-3. 缺少数据时，从 Provider 请求足够长的前复权日线：首次至少 140 个交易日；普通增量请求从最后有效交易日开始。
-4. Provider 将供应商字段转换为统一的 `DailyBarInput`，并保存源、请求时间、响应哈希与错误信息。
-5. 校验交易日、OHLC 合理性、成交量非负、复权状态及股票范围。
-6. 在一个数据库事务内 UPSERT 日线、重算受影响指标、更新数据版本、删除第 71 个交易日前记录，并写入成功日志。
-7. 成功盘后同步后生成数据库备份。
+## 3. 目录结构
 
-旧记录只能在新记录与指标计算成功后删除；同步任务失败时保留原数据并标记任务失败。
-
-### 4.2 盘中实时筛选
-
-1. 用户点击“获取实时行情”，Worker 获取非 ST 股票池的实时快照。
-2. 对每只股票定位最近一个已完成交易日的原始收盘价与前复权收盘价，计算复权因子。
-3. 将未复权实时价转换为前复权等价价格；转换不可信时记录质量异常。
-4. 实时快照仅写入 `realtime_quotes`，不修改 `daily_bars`。
-5. 筛选引擎取“最近完整日线指标 + 当前合格实时快照”执行规则，并生成不可变结果快照。
-
-### 4.3 盘后筛选
-
-1. 盘后日线同步确认成功后，当日数据成为一个已完成交易日。
-2. 筛选引擎直接使用当日前复权收盘价与当日指标。
-3. 结果记录模式为 `post_close`，不依赖实时快照。
-
-## 5. 数据库策略
-
-### 5.1 为什么使用 SQLite
-
-首期是单机应用，70 日全市场日线约 35 万行，SQLite 的文件型、事务性和备份便利性更适合。启用 WAL 模式以允许界面读取与后台写入并发；写操作仍由单一 Worker 串行协调，避免多写者竞争。
-
-### 5.2 数据保留
-
-- 日线与指标以股票为粒度保留最近 70 个已完成交易日，而不是 70 个自然日。
-- 运行时实时快照只保留每只股票最近一条，或保留有限时间窗口；不得无边界记录高频快照。
-- 任务、审计日志和备份按独立配置清理，不能与日线保留策略混淆。
-
-### 5.3 访问与迁移
-
-Drizzle 的 TypeScript schema 是 Next.js 侧的模型入口；迁移文件进入版本控制。Python Worker 从首期起使用相同的已发布 SQL schema 和显式数据库事务，不应私自修改表结构。
-
-## 6. Provider 抽象
-
-Provider 是 Python 计算层对外部行情来源的防腐层。Next.js 只读取标准化后的数据库和任务状态，绝不直接依赖某一网页或第三方 SDK 的字段名称。
-
-```python
-class MarketDataProvider(Protocol):
-    def list_securities(self) -> list[SecurityInput]: ...
-    def get_daily_bars(self, request: DailyBarRequest) -> list[DailyBarInput]: ...
-    def get_realtime_quotes(self, codes: list[str]) -> list[RealtimeQuoteInput]: ...
+```text
+src/
+  app/
+    api/                         Route Handlers
+    components/
+      custom-editor.tsx          自定义条件编辑弹窗
+      rule-selector.tsx          预设/收藏条件选择器
+      screening-results.tsx      结果表、本地 K 线和窗口
+      status-widgets.tsx         指标卡和任务进度
+      dialogs.tsx                命名、确认、Toast 弹窗
+    lib/
+      types.ts                   前端 DTO 类型
+      custom-conditions.ts       条件默认值、摘要与定义编译
+    stocks/                      股票浏览与个股详情页
+    page.tsx                     首页状态与流程编排
+  db/                            SQLite client 与 Drizzle schema
+  server/                        Worker 启动、收藏与预设服务
+quant_worker/
+  providers/                     Tushare、AKShare 等 Provider
+  strategy_rules/                预设、自定义条件和收藏 JSON
+  services.py                    同步、复权、指标相关服务
+  worker.py                      任务领取与执行
+drizzle/                         SQL migration
+scripts/dev.mjs                  本地开发服务器启动脚本
 ```
 
-实现层可以定义主源和备用源。当前 AKShare 实现对股票池、实时快照、前复权/未复权日线统一采用“腾讯 → 东方财富 → 新浪”的同口径降级链；每次响应都附带 `providerName`、`fetchedAt`、请求参数、复权状态与原始摘要。当前 AKShare 版本没有可用于该链路的同花顺全市场实时、全市场股票池或个股前复权日线接口（`stock_ipo_ths` 是新股申购数据），因此只保留同花顺给未来基本面/板块扩展，不将其伪装为价格源。发生字段缺失、限流或关键价格冲突时，Provider 返回结构化失败与切换审计，而不是让上层猜测。
+## 4. 数据与任务流
 
-## 7. 指标与规则引擎
+### 4.1 同步
 
-指标引擎是纯 Python 模块：输入按交易日升序的标准化日线，输出指标值与可用性。它不读取数据库、不发网络请求，便于 pytest 单元测试，以及未来回测/因子模块复用。
+1. 页面调用 `POST /api/jobs/daily-sync`。
+2. API 在 `sync_jobs` 中创建或复用日线同步任务。
+3. API 按需启动一次 `python -m quant_worker.cli worker`。
+4. Worker 刷新证券池、同步日线、重建前复权数据、计算指标，并保留最近 90 个交易日。
+5. 页面轮询 `GET /api/jobs/:id` 显示进度。
 
-规则引擎接受经过校验的规则 JSON 和统一的 `ScreeningContext`。规则层只声明“比较什么”，数据层决定取当日收盘或前复权等价实时价。筛选结果保存每个条件的输入值和判断结果，以便解释命中原因。
+### 4.2 筛选
 
-## 8. 后台任务设计
+1. 页面将预设 ID 或自定义 JSON 定义提交到 `POST /api/screening-runs`。
+2. API 校验请求；收藏条件由服务端从 JSON 文件读取并编译。
+3. Worker 执行条件，写入筛选运行记录和结果。
+4. 页面读取 `GET /api/screening-runs/:id` 并显示命中项。
 
-所有可能持续数十秒以上的操作都以持久化任务执行：
+### 4.3 自定义收藏
 
-- 初始化/补齐历史日线；
-- 每日盘后同步；
-- 获取全市场实时行情；
-- 批量重算指标；
-- 执行全市场筛选；
-- 生成备份。
+收藏不是数据库表记录，而是 `quant_worker/strategy_rules/collections/custom-*.json` 文件。Next.js 服务端模块负责创建、更新、删除和读取；Worker 只接收编译后的条件定义。
 
-Route Handler 只创建任务并返回任务 ID；Python Worker 更新进度、错误和结果位置。页面定时读取任务状态，因而刷新页面或短暂网络中断不会丢失任务审计信息。
+## 5. 主要持久化对象
 
-## 9. 安全与数据治理
+| 对象                                   | 用途                   |
+| -------------------------------------- | ---------------------- |
+| `securities`                           | 证券主数据和可筛选状态 |
+| `daily_raw_bars`                       | 原始日线锚点数据       |
+| `daily_bars`                           | 前复权日线             |
+| `daily_indicators`                     | MA、DKX、MADKX10       |
+| `realtime_quotes`                      | 最新实时快照           |
+| `sync_jobs`                            | 同步与筛选的异步任务   |
+| `screening_rules`                      | 内置规则元数据         |
+| `screening_runs` / `screening_results` | 筛选运行与结果         |
+| `sync_audit_logs`                      | 同步审计日志           |
 
-- 外部数据访问遵守供应商条款、频率限制及登录限制，不绕过访问控制。
-- 数据库、备份、日志及 Provider 凭据均保存在本机；令牌只放在环境变量，不写入前端或 Git。
-- 关键数据变更有来源和时间记录。遇到冲突或复权转换异常，标为不可筛选，不以默认值替代。
+## 6. Worker 运行模式
 
-## 10. 扩展路线
+- **按需模式**：同步或筛选 API 会拉起一个单次 Worker，处理一个队列任务后退出；适合本地交互。
+- **常驻模式**：`npm run worker` 对应 `python -m quant_worker.cli worker --loop`，持续轮询任务表；适合长时间运行。
 
-1. 首期：Python Worker 维护 70 日日线、实时价、MA/DKX，Next.js 提供可视化条件筛选。
-2. 第二期：保存筛选方案、规则分组、更多指标、历史结果对比。
-3. 第三期：在现有 Python Quant Worker 中增加回测、因子分析与参数优化。
-4. 数据规模扩大到多年日线、分钟线或多用户并发时，迁移到 PostgreSQL；Provider、规则协议和 Next.js 页面保持不变。
+两种模式共享同一 SQLite 数据库，部署时不应同时以多个无协调实例争抢同一任务队列。
