@@ -58,9 +58,9 @@ def _refresh_universe(connection: sqlite3.Connection, job_id: str, provider: Aks
     return codes
 
 
-def _local_active_codes(connection: sqlite3.Connection) -> list[str]:
+def _local_active_codes(connection: sqlite3.Connection, *, include_st: bool = False) -> list[str]:
     return [row[0] for row in connection.execute(
-        "SELECT code FROM securities WHERE security_type='A_SHARE' AND is_st=0 AND is_active=1 ORDER BY code"
+        "SELECT code FROM securities WHERE security_type='A_SHARE' AND is_active=1" + ("" if include_st else " AND is_st=0") + " ORDER BY code"
     )]
 
 
@@ -101,6 +101,14 @@ def _store_raw_day(connection: sqlite3.Connection, rows: list[RawDailyBarInput],
 def _mark_history_date(connection: sqlite3.Connection, trade_date: date, row_count: int) -> None:
     connection.execute(
         """INSERT INTO history_sync_dates(trade_date, provider_name, row_count, completed_at) VALUES (?, ?, ?, ?)
+           ON CONFLICT(trade_date) DO UPDATE SET provider_name=excluded.provider_name, row_count=excluded.row_count, completed_at=excluded.completed_at""",
+        (trade_date.isoformat(), TushareDailyProvider.name, row_count, utc_now()),
+    )
+
+
+def _mark_st_history_date(connection: sqlite3.Connection, trade_date: date, row_count: int) -> None:
+    connection.execute(
+        """INSERT INTO history_st_sync_dates(trade_date, provider_name, row_count, completed_at) VALUES (?, ?, ?, ?)
            ON CONFLICT(trade_date) DO UPDATE SET provider_name=excluded.provider_name, row_count=excluded.row_count, completed_at=excluded.completed_at""",
         (trade_date.isoformat(), TushareDailyProvider.name, row_count, utc_now()),
     )
@@ -151,20 +159,27 @@ def _rebuild_stock_history(connection: sqlite3.Connection, code: str, data_versi
     return True
 
 
-def sync_history_if_needed(connection: sqlite3.Connection, job_id: str, codes: list[str], *, include_today: bool = False) -> dict[str, int]:
+def sync_history_if_needed(connection: sqlite3.Connection, job_id: str, codes: list[str], *, include_today: bool = False, include_st: bool = False) -> dict[str, int]:
     known, missing = _history_candidates(connection, include_today)
-    if not missing:
+    st_missing: list[date] = []
+    if include_st:
+        st_known = {date.fromisoformat(row[0]) for row in connection.execute("SELECT trade_date FROM history_st_sync_dates")}
+        st_missing = [item for item in known if item not in st_known]
+    target_dates = list(dict.fromkeys([*missing, *st_missing]))
+    if not target_dates:
         return {"known_dates": len(known), "downloaded_dates": 0, "raw_rows": 0, "rebuilt": 0}
     provider = TushareDailyProvider()
-    total = len(missing) + len(codes)
+    total = len(target_dates) + len(codes)
     _set_progress(connection, job_id, 0, total)
     fetched_dates = raw_count = 0
     today = datetime.now(ZoneInfo(SHANGHAI_TIMEZONE)).date()
-    for index, target_date in enumerate(missing, start=1):
+    for index, target_date in enumerate(target_dates, start=1):
         rows = provider.fetch_trade_date(target_date)
         if rows:
             saved = _store_raw_day(connection, rows, set(codes))
             _mark_history_date(connection, target_date, len(rows))
+            if include_st:
+                _mark_st_history_date(connection, target_date, len(rows))
             fetched_dates += 1
             raw_count += saved
             _write_audit(connection, job_id, "history_date_saved", f"{target_date}: {saved} non-ST rows", provider.name)
@@ -176,13 +191,15 @@ def sync_history_if_needed(connection: sqlite3.Connection, job_id: str, codes: l
                 _write_audit(connection, job_id, "history_today_pending", f"{target_date}: Tushare daily not available yet; will retry", provider.name)
             else:
                 _mark_history_date(connection, target_date, 0)
+                if include_st:
+                    _mark_st_history_date(connection, target_date, 0)
                 _write_audit(connection, job_id, "history_date_empty", f"{target_date}: non-trading day or no data", provider.name)
         _set_progress(connection, job_id, index, total)
     revision = int(connection.execute("SELECT COALESCE(MAX(data_version), 0) + 1 FROM daily_bars").fetchone()[0])
     rebuilt = 0
     for index, code in enumerate(codes, start=1):
         rebuilt += int(_rebuild_stock_history(connection, code, revision))
-        _set_progress(connection, job_id, len(missing) + index, total)
+        _set_progress(connection, job_id, len(target_dates) + index, total)
     _write_audit(connection, job_id, "history_finished", f"Tushare dates={fetched_dates}, raw rows={raw_count}, rebuilt={rebuilt}", provider.name)
     return {"known_dates": len(known), "downloaded_dates": fetched_dates, "raw_rows": raw_count, "rebuilt": rebuilt}
 
@@ -260,9 +277,9 @@ def _get_intraday_snapshot(connection: sqlite3.Connection, job_id: str, provider
     return snapshot, False
 
 
-def _snapshot_qfq_prices(connection: sqlite3.Connection, snapshot: list[MarketSnapshotBarInput], codes: set[str]) -> dict[str, float]:
-    """Build transient intraday prices. AKShare rows are never persisted."""
-    prices: dict[str, float] = {}
+def _snapshot_qfq_prices(connection: sqlite3.Connection, snapshot: list[MarketSnapshotBarInput], codes: set[str]) -> dict[str, dict[str, float]]:
+    """Build transient intraday data. AKShare rows are never persisted."""
+    prices: dict[str, dict[str, float]] = {}
     for item in snapshot:
         if item.stock_code not in codes:
             continue
@@ -274,7 +291,11 @@ def _snapshot_qfq_prices(connection: sqlite3.Connection, snapshot: list[MarketSn
             continue
         factor = float(anchor["close_qfq"]) / float(anchor["raw_close"])
         if factor > 0:
-            prices[item.stock_code] = item.last_price * factor
+            prices[item.stock_code] = {
+                "qfq_price": item.last_price * factor,
+                "raw_last_price": item.last_price,
+                "raw_pre_close": item.pre_close or 0.0,
+            }
     return prices
 
 
@@ -321,17 +342,29 @@ def sync_realtime_quotes(connection: sqlite3.Connection, job_id: str, max_worker
     return result
 
 
-def ensure_screening_data(connection: sqlite3.Connection, job_id: str, max_workers: int = 4) -> tuple[str, dict[str, float]]:
-    codes = _local_active_codes(connection)
+def ensure_screening_data(connection: sqlite3.Connection, job_id: str, max_workers: int = 4, *, include_st: bool = False) -> tuple[str, dict[str, dict[str, float]]]:
+    codes = _local_active_codes(connection, include_st=include_st)
     provider: AkshareProvider | None = None
-    if not codes:
+    if not codes or include_st:
         provider = AkshareProvider(max_workers=max_workers)
         codes = _refresh_universe(connection, job_id, provider)
+        if not include_st:
+            codes = _local_active_codes(connection)
     if _is_tushare_daily_available():
-        sync_history_if_needed(connection, job_id, codes, include_today=True)
-        mode, prices = "post_close", {}
+        sync_history_if_needed(connection, job_id, codes, include_today=True, include_st=include_st)
+        today = datetime.now(ZoneInfo(SHANGHAI_TIMEZONE)).date().isoformat()
+        has_today_daily = connection.execute("SELECT 1 FROM history_sync_dates WHERE trade_date=? AND row_count>0", (today,)).fetchone() is not None
+        if has_today_daily:
+            mode, prices = "post_close", {}
+        else:
+            # 16:00 is a requested-provider attempt boundary, not proof that
+            # Tushare has finished publishing today's daily endpoint.
+            if provider is None:
+                provider = AkshareProvider(max_workers=max_workers)
+            snapshot, _ = _get_intraday_snapshot(connection, job_id, provider)
+            mode, prices = "intraday", _snapshot_qfq_prices(connection, snapshot, set(codes))
     else:
-        sync_history_if_needed(connection, job_id, codes)
+        sync_history_if_needed(connection, job_id, codes, include_st=include_st)
         if provider is None:
             provider = AkshareProvider(max_workers=max_workers)
         snapshot, _ = _get_intraday_snapshot(connection, job_id, provider)

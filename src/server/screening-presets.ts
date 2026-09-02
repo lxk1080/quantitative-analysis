@@ -11,6 +11,7 @@ export type ScreeningPreset = {
 // This catalogue is intentionally separate from the rule evaluator.  A new
 // preset needs one focused Python module and one small metadata entry here.
 const catalog: ScreeningPreset[] = [
+  { id: "custom-rule", title: "自定义条件", description: "按需勾选条件并设置参数；已启用的条件需同时满足。" },
   {
     id: "n-pattern-rule",
     title: "N字战法",

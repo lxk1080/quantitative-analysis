@@ -1,0 +1,32 @@
+{
+  "id": "custom-08baa7c6-4764-44dd-92a3-3cbf668a55e2",
+  "title": "强势N字",
+  "category": "custom",
+  "createdAt": "2026-09-02T05:38:09.517Z",
+  "updatedAt": "2026-09-02T05:38:19.039Z",
+  "config": {
+    "excludeSt": true,
+    "excludeStar": true,
+    "excludeBj": true,
+    "limitUp": true,
+    "limitDays": 3,
+    "klineMa": true,
+    "klineDays": 3,
+    "maDays": 5,
+    "closeDkx": false,
+    "closeDkxDays": 9,
+    "rank": false,
+    "rankTop": 30,
+    "dailyRange": false,
+    "dailyRangeDays": 4,
+    "dailyRangeLower": 0,
+    "dailyRangeUpper": 3,
+    "interval": false,
+    "intervalDays": 4,
+    "intervalMaximum": 0,
+    "deviation": false,
+    "deviationLower": -2,
+    "deviationDaysAgo": 0,
+    "deviationUpper": 5
+  }
+}

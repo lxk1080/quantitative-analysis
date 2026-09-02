@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from quant_worker.strategy_rules import evaluate_preset
+from quant_worker.strategy_rules.custom_conditions import evaluate_custom_condition
 
 
 IndicatorName = Literal["ma5", "ma10", "ma60", "dkx", "madkx10"]
@@ -34,6 +35,9 @@ def _unavailable(condition: dict[str, Any], message: str, values: dict[str, Any]
 
 def evaluate_condition(condition: dict[str, Any], context: dict[str, Any]) -> ConditionResult:
     condition_type = condition.get("type")
+    custom_result = evaluate_custom_condition(condition, context)
+    if custom_result is not None:
+        return custom_result
     if condition_type == "preset":
         preset_id = str(condition.get("preset_id", ""))
         result = evaluate_preset(preset_id, condition, context)

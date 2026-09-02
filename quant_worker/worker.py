@@ -27,7 +27,7 @@ def _claim_next_job(connection: sqlite3.Connection) -> sqlite3.Row | None:
         return job
 
 
-def _latest_context(connection: sqlite3.Connection, security: sqlite3.Row, mode: str, intraday_prices: dict[str, float] | None = None) -> dict[str, Any] | None:
+def _latest_context(connection: sqlite3.Connection, security: sqlite3.Row, mode: str, intraday_prices: dict[str, dict[str, float]] | None = None) -> dict[str, Any] | None:
     code = str(security["code"])
     rows = connection.execute(
         """SELECT b.trade_date, b.open_qfq, b.high_qfq, b.low_qfq, b.close_qfq, b.raw_close,
@@ -43,33 +43,51 @@ def _latest_context(connection: sqlite3.Connection, security: sqlite3.Row, mode:
         return None
     bars = [dict(row) for row in rows]
     current_price = float(rows[-1]["close_qfq"])
+    intraday_quote: dict[str, float] | None = None
     if mode == "intraday":
-        quote_price = (intraday_prices or {}).get(code)
-        if quote_price is None:
+        intraday_quote = (intraday_prices or {}).get(code)
+        if intraday_quote is None:
             return None
-        current_price = quote_price
-    return {"bars": bars, "indicators": bars, "current_price": current_price,
+        current_price = intraday_quote["qfq_price"]
+    return {"bars": bars, "indicators": bars, "current_price": current_price, "mode": mode,
+            "intraday_quote": intraday_quote,
             "security": {"code": code, "exchange": security["exchange"], "is_st": bool(security["is_st"])}}
 
 
 def run_screening(connection: sqlite3.Connection, payload: dict[str, Any], job_id: str) -> dict[str, Any]:
     rule_id = str(payload["rule_id"])
-    # A screening task is self-sufficient: backfill history first, then use a
-    # <=5-minute intraday cache before 15:00 or persist today's close after it.
-    mode, intraday_prices = ensure_screening_data(connection, job_id, int(payload.get("max_workers", 4)))
     rule = connection.execute("SELECT * FROM screening_rules WHERE id=?", (rule_id,)).fetchone()
     if rule is None:
         raise ValueError(f"rule not found: {rule_id}")
-    definition = json.loads(rule["definition_json"])
+    definition = payload.get("definition") if rule_id == "custom-rule" else None
+    if not isinstance(definition, dict):
+        definition = json.loads(rule["definition_json"])
+    conditions = definition.get("conditions", [])
+    include_st = rule_id == "custom-rule" and not any(item.get("type") == "exclude_st" for item in conditions if isinstance(item, dict))
+    # A screening task is self-sufficient: backfill history first, then use a
+    # <=5-minute intraday cache before 15:00 or persist today's close after it.
+    mode, intraday_prices = ensure_screening_data(connection, job_id, int(payload.get("max_workers", 4)), include_st=include_st)
     latest_date = connection.execute("SELECT MAX(trade_date) AS value FROM daily_bars").fetchone()["value"]
     if latest_date is None:
         raise ValueError("no daily bars available")
     run_id = str(uuid.uuid4())
     now = utc_now()
     securities = connection.execute(
-        """SELECT code, exchange, is_st FROM securities
-           WHERE security_type='A_SHARE' AND is_st=0 AND is_active=1 ORDER BY code"""
+        "SELECT code, exchange, is_st FROM securities WHERE security_type='A_SHARE' AND is_active=1" + ("" if include_st else " AND is_st=0") + " ORDER BY code"
     ).fetchall()
+    contexts = {security["code"]: _latest_context(connection, security, mode, intraday_prices) for security in securities}
+    if any(item.get("type") == "two_month_return_rank" for item in conditions if isinstance(item, dict)):
+        returns: list[tuple[str, float]] = []
+        for code, context in contexts.items():
+            if context is None or len(context["bars"]) < 41:
+                continue
+            start = float(context["bars"][-41]["close_qfq"])
+            end = float(context["bars"][-1]["close_qfq"])
+            if start > 0:
+                returns.append((code, (end / start - 1) * 100))
+        for rank, (code, _) in enumerate(sorted(returns, key=lambda item: item[1], reverse=True), start=1):
+            if contexts[code] is not None:
+                contexts[code]["two_month_rank"] = rank
     matched = unavailable = 0
     with transaction(connection):
         connection.execute(
@@ -79,7 +97,7 @@ def run_screening(connection: sqlite3.Connection, payload: dict[str, Any], job_i
         )
         for security in securities:
             code = security["code"]
-            context = _latest_context(connection, security, mode, intraday_prices)
+            context = contexts[code]
             if context is None:
                 status, detail, price = "unavailable", {"reason": "指标或实时前复权价格不可用"}, None
                 unavailable += 1

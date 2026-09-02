@@ -35,8 +35,9 @@ def evaluate_n_low_absorption(condition: dict[str, Any], context: dict[str, Any]
     bars = context.get("bars", [])
     if len(bars) < 5:
         return _result(condition, "unavailable", {}, "日线不足，无法判断 4 个交易日前涨停")
-    limit_up_bar = bars[-5]
-    interval_bars = bars[-4:]
+    intraday = context.get("mode") == "intraday"
+    limit_up_bar = bars[-4] if intraday else bars[-5]
+    interval_bars = bars[-3:] if intraday else bars[-4:]
     raw_close, pre_close = limit_up_bar.get("raw_close"), limit_up_bar.get("pre_close")
     if raw_close is None or pre_close is None or float(pre_close) <= 0:
         return _result(condition, "unavailable", {"limit_up_date": limit_up_bar.get("trade_date")}, "缺少涨停日原始价格")

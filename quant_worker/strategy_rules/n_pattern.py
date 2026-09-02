@@ -41,7 +41,12 @@ def evaluate_n_pattern(condition: dict[str, Any], context: dict[str, Any]) -> An
     if len(bars) < 4:
         return _result(condition, "unavailable", {}, "日线不足，无法判断 3 个交易日前涨停")
 
-    limit_up_bar = bars[-4]
+    # Before 16:00 the latest persisted daily bar is yesterday, while the
+    # screening date is today.  Therefore "3 trading days ago" is bars[-3]
+    # intraday (not bars[-4]); after close today's bar is persisted and the
+    # ordinary bars[-4] offset applies.
+    limit_index = -3 if context.get("mode") == "intraday" else -4
+    limit_up_bar = bars[limit_index]
     raw_close = limit_up_bar.get("raw_close")
     pre_close = limit_up_bar.get("pre_close")
     if raw_close is None or pre_close is None or float(pre_close) <= 0:

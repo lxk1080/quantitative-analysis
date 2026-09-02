@@ -153,8 +153,8 @@ class AkshareProvider:
             code = self._code(self._value(row, "code", "代码", "股票代码"))
             name_value = self._value(row, "name", "名称", "股票简称")
             name = str(name_value).strip() if name_value is not None else ""
-            if code and name and not self._is_st(name):
-                items[code] = SecurityInput(code, self._exchange(code), name, "A_SHARE", False, True)
+            if code and name:
+                items[code] = SecurityInput(code, self._exchange(code), name, "A_SHARE", self._is_st(name), True)
         return list(items.values())
 
     def list_securities(self) -> list[SecurityInput]:
@@ -299,7 +299,7 @@ class AkshareProvider:
             high = self._number(self._value(row, "high", "最高"))
             low = self._number(self._value(row, "low", "最低"))
             pre_close = self._number(self._value(row, "pre_close", "昨收", "昨收价"))
-            if not code or not name or self._is_st(name) or last is None or last <= 0:
+            if not code or not name or last is None or last <= 0:
                 continue
             if any(value is None or value <= 0 for value in (open_price, high, low, pre_close)):
                 continue
