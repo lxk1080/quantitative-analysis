@@ -49,6 +49,10 @@ def _latest_context(connection: sqlite3.Connection, security: sqlite3.Row, mode:
         if intraday_quote is None:
             return None
         current_price = intraday_quote["qfq_price"]
+        mids = [(3 * float(bar["close_qfq"]) + float(bar["open_qfq"]) + float(bar["high_qfq"]) + float(bar["low_qfq"])) / 6 for bar in bars]
+        current_mid = (3 * current_price + intraday_quote["qfq_open"] + intraday_quote["qfq_high"] + intraday_quote["qfq_low"]) / 6
+        mids.append(current_mid)
+        intraday_quote["dkx"] = (sum((20 - offset) * mids[-1 - offset] for offset in range(19)) + mids[-21]) / 210 if len(mids) >= 21 else 0.0
     return {"bars": bars, "indicators": bars, "current_price": current_price, "mode": mode,
             "intraday_quote": intraday_quote,
             "security": {"code": code, "exchange": security["exchange"], "is_st": bool(security["is_st"])}}

@@ -295,6 +295,10 @@ def _snapshot_qfq_prices(connection: sqlite3.Connection, snapshot: list[MarketSn
                 "qfq_price": item.last_price * factor,
                 "raw_last_price": item.last_price,
                 "raw_pre_close": item.pre_close or 0.0,
+                "volume": float(item.volume or 0),
+                "qfq_open": float(item.open_price or item.last_price) * factor,
+                "qfq_high": float(item.high_price or item.last_price) * factor,
+                "qfq_low": float(item.low_price or item.last_price) * factor,
             }
     return prices
 
