@@ -49,3 +49,6 @@ table { width:100%; border-collapse:collapse; font-size:14px; } th,td { border-b
 .toast::before { content:"✓"; display:grid; width:19px; height:19px; place-items:center; border-radius:50%; color:#fff; background:#0d766e; font-size:12px; }
 @keyframes toast-in { from { opacity:0; transform:translateY(-12px); } to { opacity:1; transform:translateY(0); } }
 .rule-panel-header > .primary { margin-left:auto; white-space:nowrap; }
+.screening-loading { display:flex; align-items:center; justify-content:center; gap:10px; min-height:104px; color:var(--muted); font-weight:700; }
+.loading-spinner { width:24px; height:24px; border:3px solid #cbd8e8; border-top-color:#0f766e; border-radius:50%; animation:screening-spin .7s linear infinite; }
+@keyframes screening-spin { to { transform:rotate(360deg); } }

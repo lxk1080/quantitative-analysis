@@ -33,6 +33,7 @@ export default function HomePage() {
   const [status, setStatus] = useState<Status>(emptyStatus);
   const [message, setMessage] = useState("正在加载数据概览…");
   const [busy, setBusy] = useState(false);
+  const [screeningLoading, setScreeningLoading] = useState(false);
   const [job, setJob] = useState<Job | null>(null);
   const [result, setResult] = useState<ScreeningResult | null>(null);
   const [choices, setChoices] = useState<RuleChoice[]>([]);
@@ -182,6 +183,7 @@ export default function HomePage() {
     )
       return;
     setBusy(true);
+    setScreeningLoading(true);
     setResult(null);
     setJob({ status: "queued", progressCurrent: 0, progressTotal: 0 });
     setMessage(`正在按“${selected.title}”筛选…`);
@@ -201,6 +203,7 @@ export default function HomePage() {
     };
     if (!response.ok) {
       setBusy(false);
+      setScreeningLoading(false);
       setJob(null);
       setMessage(payload.error ?? "创建筛选任务失败");
       return;
@@ -209,15 +212,18 @@ export default function HomePage() {
     setBusy(false);
     await refresh();
     if (!finished) {
+      setScreeningLoading(false);
       setMessage("任务仍在后台执行，可稍后刷新页面查看状态。");
       return;
     }
     if (finished.status === "failed") {
+      setScreeningLoading(false);
       setMessage(`筛选失败：${finished.error ?? "未知错误"}`);
       return;
     }
     const summary = JSON.parse(finished.summary ?? "{}") as { run_id?: string };
     if (!summary.run_id) {
+      setScreeningLoading(false);
       setMessage("筛选完成，但未返回结果标识。");
       return;
     }
@@ -228,6 +234,7 @@ export default function HomePage() {
     if (resultResponse.ok) {
       setResult((await resultResponse.json()) as ScreeningResult);
     }
+    setScreeningLoading(false);
     setMessage("筛选完成。");
   }
 
@@ -389,6 +396,12 @@ export default function HomePage() {
           <p className="muted">正在加载可用筛选条件…</p>
         )}
       </section>
+      {screeningLoading && (
+        <div className="screening-loading" role="status" aria-live="polite">
+          <span className="loading-spinner" aria-hidden="true" />
+          <span>正在筛选…</span>
+        </div>
+      )}
       {result && <ScreeningResults result={result} />}
       {selectorOpen && (
         <RuleSelector
