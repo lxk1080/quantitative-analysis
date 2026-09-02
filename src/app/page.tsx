@@ -1,55 +1,424 @@
 "use client";
 
 import Link from "next/link";
-import { type ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useState,
+} from "react";
 
-type Status = { ready: boolean; securities: number; dailyBars: number; latestTradeDate: string | null; pendingJobs: number; defaultRuleId: string | null };
-type Job = { status: "queued" | "running" | "succeeded" | "failed"; progressCurrent: number; progressTotal: number; summary?: string | null; error?: string | null };
-type Preset = { id: string; title: string; description: string };
-type CustomConfig = { excludeSt: boolean; excludeStar: boolean; excludeBj: boolean; limitUp: boolean; limitDays: number; klineMa: boolean; klineDays: number; maDays: number; closeDkx: boolean; closeDkxDays: number; rank: boolean; rankTop: number; dailyRange: boolean; dailyRangeDays: number; dailyRangeLower: number; dailyRangeUpper: number; interval: boolean; intervalDays: number; intervalMaximum: number; volumeRatio: boolean; volumeRatioDays: number; volumeRatioMinimum: number; deviation: boolean; deviationLower: number; deviationDaysAgo: number; deviationUpper: number };
-type RuleChoice = { id: string; title: string; description: string; category: "preset" | "custom"; config?: CustomConfig };
-type ScreeningResult = { run: { id: string; matchedCount: number; unavailableCount: number; dataAsOf: string; mode: string }; results: Array<{ stockCode: string; name: string; status: string; currentPrice: number | null; detail: string }> };
-
-const emptyStatus: Status = { ready: false, securities: 0, dailyBars: 0, latestTradeDate: null, pendingJobs: 0, defaultRuleId: null };
-const initialCustom: CustomConfig = { excludeSt: true, excludeStar: true, excludeBj: true, limitUp: false, limitDays: 3, klineMa: false, klineDays: 3, maDays: 5, closeDkx: false, closeDkxDays: 9, rank: false, rankTop: 30, dailyRange: false, dailyRangeDays: 4, dailyRangeLower: 0, dailyRangeUpper: 3, interval: false, intervalDays: 4, intervalMaximum: 0, volumeRatio: false, volumeRatioDays: 0, volumeRatioMinimum: 3, deviation: false, deviationLower: -2, deviationDaysAgo: 0, deviationUpper: 5 };
-const directCustomChoice = (config: CustomConfig): RuleChoice => ({ id: "custom-rule", title: "自定义条件", description: customSummary(config), category: "custom", config });
+import { CustomEditor } from "./components/custom-editor";
+import { RuleSelector } from "./components/rule-selector";
+import { ScreeningResults } from "./components/screening-results";
+import { Metric, Progress } from "./components/status-widgets";
+import {
+  buildCustomDefinition,
+  customSummary,
+  directCustomChoice,
+  emptyStatus,
+  initialCustom,
+} from "./lib/custom-conditions";
+import type {
+  CustomConfig,
+  Job,
+  Preset,
+  RuleChoice,
+  ScreeningResult,
+  Status,
+} from "./lib/types";
 
 export default function HomePage() {
-  const [status, setStatus] = useState<Status>(emptyStatus); const [message, setMessage] = useState("正在加载数据概览…"); const [busy, setBusy] = useState(false); const [job, setJob] = useState<Job | null>(null); const [result, setResult] = useState<ScreeningResult | null>(null);
-  const [choices, setChoices] = useState<RuleChoice[]>([]); const [selected, setSelected] = useState<RuleChoice | null>(null); const [selectorOpen, setSelectorOpen] = useState(false); const [customEditorOpen, setCustomEditorOpen] = useState(false); const [custom, setCustom] = useState<CustomConfig>(initialCustom); const [customDraft, setCustomDraft] = useState<CustomConfig>(initialCustom); const [editingCollectionId, setEditingCollectionId] = useState<string | null>(null);
-  const refresh = useCallback(async () => { try { const response = await fetch("/api/status", { cache: "no-store" }); if (!response.ok) return false; setStatus(await response.json() as Status); return true; } catch { return false; } }, []);
-  const loadChoices = useCallback(async () => { try { const response = await fetch("/api/screening-rules", { cache: "no-store" }); if (!response.ok) return; const payload = await response.json() as { presets: Preset[]; collections: Array<{ id: string; title: string; config: CustomConfig }> }; const next: RuleChoice[] = [...payload.presets.filter((item) => item.id !== "custom-rule").map((item) => ({ ...item, category: "preset" as const })), ...payload.collections.map((item) => ({ id: item.id, title: item.title, description: customSummary(item.config), category: "custom" as const, config: item.config }))]; setChoices(next); setSelected((current) => { if (!current) return next.find((item) => item.id === "n-pattern-rule") ?? next[0] ?? null; if (current.id === "custom-rule") return current; return next.find((item) => item.id === current.id) ?? next.find((item) => item.id === "n-pattern-rule") ?? next[0] ?? null; }); } catch { setChoices([]); } }, []);
-  useEffect(() => { void refresh().then((loaded) => setMessage(loaded ? "数据概览已加载。" : "数据概览加载失败，请刷新页面重试。")); void loadChoices(); }, [loadChoices, refresh]);
-  useLayoutEffect(() => { const button = document.querySelector<HTMLButtonElement>(".action-toolbar > .primary"); const header = document.querySelector<HTMLElement>(".rule-panel-header"); if (button && header && button.parentElement !== header) header.append(button); }, []);
-  const customDefinition = useMemo(() => buildCustomDefinition(custom), [custom]); const progress = job && job.progressTotal > 0 ? Math.min(100, Math.round(job.progressCurrent / job.progressTotal * 100)) : null;
-  async function waitForJob(jobId: string): Promise<Job | null> { for (let attempt = 0; attempt < 7200; attempt += 1) { await new Promise((resolve) => setTimeout(resolve, 800)); const response = await fetch(`/api/jobs/${jobId}`, { cache: "no-store" }); if (!response.ok) return null; const next = await response.json() as Job; setJob(next); if (next.status === "succeeded" || next.status === "failed") return next; } return null; }
-  async function startSync() { setBusy(true); setResult(null); setJob({ status: "queued", progressCurrent: 0, progressTotal: 0 }); setMessage("正在提交同步任务…"); const response = await fetch("/api/jobs/daily-sync", { method: "POST" }); const payload = await response.json() as { error?: string; reused?: boolean; jobId: string }; if (!response.ok) { setBusy(false); setJob(null); setMessage(payload.error ?? "创建同步任务失败"); return; } setMessage(payload.reused ? "已有同步任务正在执行，已接入该任务进度。" : "正在检查本地最近 90 个交易日数据；仅缺失时才补齐。"); const finished = await waitForJob(payload.jobId); setBusy(false); await refresh(); if (!finished) setMessage("任务仍在后台执行，可稍后刷新页面查看状态。"); else if (finished.status === "failed") setMessage(`同步失败：${finished.error ?? "未知错误"}`); else setMessage(`同步完成：${summarize(finished.summary)}`); }
-  async function runScreening() { if (!selected || (selected.id === "custom-rule" && customDefinition.conditions.length === 0)) return; setBusy(true); setResult(null); setJob({ status: "queued", progressCurrent: 0, progressTotal: 0 }); setMessage(`正在按“${selected.title}”筛选…`); const response = await fetch("/api/screening-runs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ruleId: selected.id, mode: "intraday", definition: selected.id === "custom-rule" ? customDefinition : undefined }) }); const payload = await response.json() as { error?: string; jobId: string }; if (!response.ok) { setBusy(false); setJob(null); setMessage(payload.error ?? "创建筛选任务失败"); return; } const finished = await waitForJob(payload.jobId); setBusy(false); await refresh(); if (!finished) { setMessage("任务仍在后台执行，可稍后刷新页面查看状态。"); return; } if (finished.status === "failed") { setMessage(`筛选失败：${finished.error ?? "未知错误"}`); return; } const summary = JSON.parse(finished.summary ?? "{}") as { run_id?: string }; if (!summary.run_id) { setMessage("筛选完成，但未返回结果标识。"); return; } const resultResponse = await fetch(`/api/screening-runs/${summary.run_id}`, { cache: "no-store" }); if (resultResponse.ok) setResult(await resultResponse.json() as ScreeningResult); setMessage("筛选完成。"); }
-  function chooseRule(choice: RuleChoice) { setSelected(choice); if (choice.category === "custom" && choice.config) setCustom(choice.config); setSelectorOpen(false); }
-  function openNewCustom() { const next = { ...initialCustom }; setCustomDraft(next); setEditingCollectionId(null); setCustomEditorOpen(true); }
-  function openEditCustom(choice: RuleChoice) { if (!choice.config) return; setSelected(choice); setCustom(choice.config); setCustomDraft({ ...choice.config }); setEditingCollectionId(choice.id); setSelectorOpen(false); setCustomEditorOpen(true); }
-  async function saveCollection(title: string): Promise<boolean> { const name = title.trim(); if (!name) return false; const response = await fetch(editingCollectionId ? `/api/custom-rules/${editingCollectionId}` : "/api/custom-rules", { method: editingCollectionId ? "PUT" : "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ config: customDraft, title: name }) }); if (!response.ok) { setMessage("收藏保存失败，请重试。"); return false; } const saved = await response.json() as { id: string }; setEditingCollectionId(saved.id); await loadChoices(); return true; }
-  async function confirmCustom(): Promise<boolean> { if (editingCollectionId) { const response = await fetch(`/api/custom-rules/${editingCollectionId}`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ config: customDraft }) }); if (!response.ok) { setMessage("自定义条件保存失败，请重试。"); return false; } const saved = await response.json() as { id: string; title: string; config: CustomConfig }; setCustom(saved.config); setSelected({ id: saved.id, title: saved.title, description: customSummary(saved.config), category: "custom", config: saved.config }); await loadChoices(); } else { setCustom(customDraft); setSelected(directCustomChoice(customDraft)); } return true; }
-  async function deleteCollection(choice: RuleChoice): Promise<boolean> { const response = await fetch(`/api/custom-rules/${choice.id}`, { method: "DELETE" }); if (!response.ok) { setMessage("删除失败，请重试。"); return false; } setSelected((current) => current?.id === choice.id ? null : current); await loadChoices(); return true; }
-  return <main className="shell"><header><h1 className="home-title">量化分析</h1></header><section className="notice"><strong>数据策略：</strong>数据库日线只以 Tushare 为准；16:00 前仅使用 AKShare 临时快照，不写入数据库。</section><section className="grid metrics"><Metric label="非 ST 股票池" value={status.ready ? String(status.securities) : "未就绪"} /><Metric label="有效日线" value={status.ready ? String(status.dailyBars) : "—"} /><Metric label="最近交易日" value={status.latestTradeDate ?? "—"} /><Metric label="待处理任务" value={String(status.pendingJobs)} /></section><section className="buttons action-toolbar"><Link className="button-link" href="/stocks">浏览股票数据</Link><button onClick={startSync} disabled={busy}>同步历史与今日数据</button><button className="primary" onClick={runScreening} disabled={busy || !selected || (selected.id === "custom-rule" && customDefinition.conditions.length === 0)}>运行筛选（自动判断盘中/盘后）</button></section><section className="panel"><h2>数据与任务</h2><p>{message}</p>{job && <Progress job={job} progress={progress} />}</section><section className="panel rule-panel"><div className="rule-panel-header rule-panel-title-row"><h2>筛选条件</h2><div className="rule-actions"><button onClick={() => setSelectorOpen(true)} disabled={busy}>选择筛选条件</button><button onClick={openNewCustom} disabled={busy}>自定义条件</button></div></div>{selected ? <div className="selected-rule"><h3>{selected.title}</h3><p>{selected.description}</p></div> : <p className="muted">正在加载可用筛选条件…</p>}</section>{result && <Results result={result} />}{selectorOpen && <RuleSelector choices={choices} selectedId={selected?.id ?? null} onClose={() => setSelectorOpen(false)} onChoose={chooseRule} onEdit={openEditCustom} onDelete={deleteCollection} />}{customEditorOpen && <CustomEditor value={customDraft} onChange={setCustomDraft} isEditing={Boolean(editingCollectionId)} onClose={() => setCustomEditorOpen(false)} onFavorite={saveCollection} onConfirm={confirmCustom} />}</main>;
+  const [status, setStatus] = useState<Status>(emptyStatus);
+  const [message, setMessage] = useState("正在加载数据概览…");
+  const [busy, setBusy] = useState(false);
+  const [job, setJob] = useState<Job | null>(null);
+  const [result, setResult] = useState<ScreeningResult | null>(null);
+  const [choices, setChoices] = useState<RuleChoice[]>([]);
+  const [selected, setSelected] = useState<RuleChoice | null>(null);
+  const [selectorOpen, setSelectorOpen] = useState(false);
+  const [customEditorOpen, setCustomEditorOpen] = useState(false);
+  const [custom, setCustom] = useState<CustomConfig>(initialCustom);
+  const [customDraft, setCustomDraft] = useState<CustomConfig>(initialCustom);
+  const [editingCollectionId, setEditingCollectionId] = useState<string | null>(
+    null,
+  );
+
+  const refresh = useCallback(async () => {
+    try {
+      const response = await fetch("/api/status", { cache: "no-store" });
+      if (!response.ok) return false;
+      setStatus((await response.json()) as Status);
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const loadChoices = useCallback(async () => {
+    try {
+      const response = await fetch("/api/screening-rules", {
+        cache: "no-store",
+      });
+      if (!response.ok) return;
+      const payload = (await response.json()) as {
+        presets: Preset[];
+        collections: Array<{ id: string; title: string; config: CustomConfig }>;
+      };
+      const next: RuleChoice[] = [
+        ...payload.presets
+          .filter((item) => item.id !== "custom-rule")
+          .map((item) => ({ ...item, category: "preset" as const })),
+        ...payload.collections.map((item) => ({
+          id: item.id,
+          title: item.title,
+          description: customSummary(item.config),
+          category: "custom" as const,
+          config: item.config,
+        })),
+      ];
+      setChoices(next);
+      setSelected((current) => {
+        if (!current)
+          return (
+            next.find((item) => item.id === "n-pattern-rule") ?? next[0] ?? null
+          );
+        if (current.id === "custom-rule") return current;
+        return (
+          next.find((item) => item.id === current.id) ??
+          next.find((item) => item.id === "n-pattern-rule") ??
+          next[0] ??
+          null
+        );
+      });
+    } catch {
+      setChoices([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh().then((loaded) =>
+      setMessage(
+        loaded ? "数据概览已加载！" : "数据概览加载失败，请刷新页面重试。",
+      ),
+    );
+    void loadChoices();
+  }, [loadChoices, refresh]);
+
+  useLayoutEffect(() => {
+    const button = document.querySelector<HTMLButtonElement>(
+      ".action-toolbar > .primary",
+    );
+    const header = document.querySelector<HTMLElement>(".rule-panel-header");
+    if (button && header && button.parentElement !== header) {
+      header.append(button);
+    }
+  }, []);
+
+  const customDefinition = useMemo(
+    () => buildCustomDefinition(custom),
+    [custom],
+  );
+  const progress =
+    job && job.progressTotal > 0
+      ? Math.min(
+          100,
+          Math.round((job.progressCurrent / job.progressTotal) * 100),
+        )
+      : null;
+
+  async function waitForJob(jobId: string): Promise<Job | null> {
+    for (let attempt = 0; attempt < 7200; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      const response = await fetch(`/api/jobs/${jobId}`, { cache: "no-store" });
+      if (!response.ok) return null;
+      const next = (await response.json()) as Job;
+      setJob(next);
+      if (next.status === "succeeded" || next.status === "failed") return next;
+    }
+    return null;
+  }
+
+  async function startSync() {
+    setBusy(true);
+    setResult(null);
+    setJob({ status: "queued", progressCurrent: 0, progressTotal: 0 });
+    setMessage("正在提交同步任务…");
+    const response = await fetch("/api/jobs/daily-sync", { method: "POST" });
+    const payload = (await response.json()) as {
+      error?: string;
+      reused?: boolean;
+      jobId: string;
+    };
+    if (!response.ok) {
+      setBusy(false);
+      setJob(null);
+      setMessage(payload.error ?? "创建同步任务失败");
+      return;
+    }
+    setMessage(
+      payload.reused
+        ? "已有同步任务正在执行，已接入该任务进度。"
+        : "正在检查本地最近 90 个交易日数据；仅缺失时才补齐。",
+    );
+    const finished = await waitForJob(payload.jobId);
+    setBusy(false);
+    await refresh();
+    if (!finished) {
+      setMessage("任务仍在后台执行，可稍后刷新页面查看状态。");
+    } else if (finished.status === "failed") {
+      setMessage(`同步失败：${finished.error ?? "未知错误"}`);
+    } else {
+      setMessage(`同步完成：${summarize(finished.summary)}`);
+    }
+  }
+
+  async function runScreening() {
+    if (
+      !selected ||
+      (selected.id === "custom-rule" &&
+        customDefinition.conditions.length === 0)
+    )
+      return;
+    setBusy(true);
+    setResult(null);
+    setJob({ status: "queued", progressCurrent: 0, progressTotal: 0 });
+    setMessage(`正在按“${selected.title}”筛选…`);
+    const response = await fetch("/api/screening-runs", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        ruleId: selected.id,
+        mode: "intraday",
+        definition:
+          selected.id === "custom-rule" ? customDefinition : undefined,
+      }),
+    });
+    const payload = (await response.json()) as {
+      error?: string;
+      jobId: string;
+    };
+    if (!response.ok) {
+      setBusy(false);
+      setJob(null);
+      setMessage(payload.error ?? "创建筛选任务失败");
+      return;
+    }
+    const finished = await waitForJob(payload.jobId);
+    setBusy(false);
+    await refresh();
+    if (!finished) {
+      setMessage("任务仍在后台执行，可稍后刷新页面查看状态。");
+      return;
+    }
+    if (finished.status === "failed") {
+      setMessage(`筛选失败：${finished.error ?? "未知错误"}`);
+      return;
+    }
+    const summary = JSON.parse(finished.summary ?? "{}") as { run_id?: string };
+    if (!summary.run_id) {
+      setMessage("筛选完成，但未返回结果标识。");
+      return;
+    }
+    const resultResponse = await fetch(
+      `/api/screening-runs/${summary.run_id}`,
+      { cache: "no-store" },
+    );
+    if (resultResponse.ok) {
+      setResult((await resultResponse.json()) as ScreeningResult);
+    }
+    setMessage("筛选完成。");
+  }
+
+  function chooseRule(choice: RuleChoice) {
+    setSelected(choice);
+    if (choice.category === "custom" && choice.config) setCustom(choice.config);
+    setSelectorOpen(false);
+  }
+
+  function openNewCustom() {
+    const next = { ...initialCustom };
+    setCustomDraft(next);
+    setEditingCollectionId(null);
+    setCustomEditorOpen(true);
+  }
+
+  function openEditCustom(choice: RuleChoice) {
+    if (!choice.config) return;
+    setCustomDraft({ ...choice.config });
+    setEditingCollectionId(choice.id);
+    setCustomEditorOpen(true);
+  }
+
+  async function saveCollection(title: string): Promise<boolean> {
+    const name = title.trim();
+    if (!name) return false;
+    const response = await fetch(
+      editingCollectionId
+        ? `/api/custom-rules/${editingCollectionId}`
+        : "/api/custom-rules",
+      {
+        method: editingCollectionId ? "PUT" : "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ config: customDraft, title: name }),
+      },
+    );
+    if (!response.ok) {
+      setMessage("收藏保存失败，请重试。");
+      return false;
+    }
+    const saved = (await response.json()) as { id: string };
+    setEditingCollectionId(saved.id);
+    await loadChoices();
+    return true;
+  }
+
+  async function confirmCustom(): Promise<boolean> {
+    if (editingCollectionId) {
+      const response = await fetch(`/api/custom-rules/${editingCollectionId}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ config: customDraft }),
+      });
+      if (!response.ok) {
+        setMessage("自定义条件保存失败，请重试。");
+        return false;
+      }
+      const saved = (await response.json()) as {
+        id: string;
+        title: string;
+        config: CustomConfig;
+      };
+      setSelected((current) =>
+        current?.id === saved.id
+          ? {
+              id: saved.id,
+              title: saved.title,
+              description: customSummary(saved.config),
+              category: "custom",
+              config: saved.config,
+            }
+          : current,
+      );
+      await loadChoices();
+    } else {
+      setCustom(customDraft);
+      setSelected(directCustomChoice(customDraft));
+    }
+    return true;
+  }
+
+  async function deleteCollection(choice: RuleChoice): Promise<boolean> {
+    const response = await fetch(`/api/custom-rules/${choice.id}`, {
+      method: "DELETE",
+    });
+    if (!response.ok) {
+      setMessage("删除失败，请重试。");
+      return false;
+    }
+    setSelected((current) => (current?.id === choice.id ? null : current));
+    await loadChoices();
+    return true;
+  }
+
+  return (
+    <main className="shell">
+      <header>
+        <h1 className="home-title">量化分析</h1>
+      </header>
+      <section className="notice">
+        <strong>数据策略：</strong>数据库日线只以 Tushare 为准；16:00 前仅使用
+        AKShare 临时快照，不写入数据库。
+      </section>
+      <section className="grid metrics">
+        <Metric
+          label="非 ST 股票池"
+          value={status.ready ? String(status.securities) : "未就绪"}
+        />
+        <Metric
+          label="有效日线"
+          value={status.ready ? String(status.dailyBars) : "-"}
+        />
+        <Metric label="最近交易日" value={status.latestTradeDate ?? "-"} />
+        <Metric label="待处理任务" value={String(status.pendingJobs)} />
+      </section>
+      <section className="buttons action-toolbar">
+        <Link className="button-link" href="/stocks">
+          浏览股票数据
+        </Link>
+        <button onClick={startSync} disabled={busy}>
+          同步历史与今日数据
+        </button>
+        <button
+          className="primary"
+          onClick={runScreening}
+          disabled={
+            busy ||
+            !selected ||
+            (selected.id === "custom-rule" &&
+              customDefinition.conditions.length === 0)
+          }
+        >
+          运行筛选
+        </button>
+      </section>
+      <section className="panel">
+        <h2>数据与任务</h2>
+        <p>{message}</p>
+        {job && <Progress job={job} progress={progress} />}
+      </section>
+      <section className="panel rule-panel">
+        <div className="rule-panel-header rule-panel-title-row">
+          <h2>筛选条件</h2>
+          <div className="rule-actions">
+            <button onClick={() => setSelectorOpen(true)} disabled={busy}>
+              选择筛选条件
+            </button>
+            <button onClick={openNewCustom} disabled={busy}>
+              自定义条件
+            </button>
+          </div>
+        </div>
+        {selected ? (
+          <div className="selected-rule">
+            <h3>{selected.title}</h3>
+            <p>{selected.description}</p>
+          </div>
+        ) : (
+          <p className="muted">正在加载可用筛选条件…</p>
+        )}
+      </section>
+      {result && <ScreeningResults result={result} />}
+      {selectorOpen && (
+        <RuleSelector
+          choices={choices}
+          selectedId={selected?.id ?? null}
+          onClose={() => setSelectorOpen(false)}
+          onChoose={chooseRule}
+          onEdit={openEditCustom}
+          onDelete={deleteCollection}
+        />
+      )}
+      {customEditorOpen && (
+        <CustomEditor
+          value={customDraft}
+          onChange={setCustomDraft}
+          isEditing={Boolean(editingCollectionId)}
+          onClose={() => setCustomEditorOpen(false)}
+          onFavorite={saveCollection}
+          onConfirm={confirmCustom}
+        />
+      )}
+    </main>
+  );
 }
 
-function RuleSelector({ choices, selectedId, onClose, onChoose, onEdit, onDelete }: { choices: RuleChoice[]; selectedId: string | null; onClose: () => void; onChoose: (choice: RuleChoice) => void; onEdit: (choice: RuleChoice) => void; onDelete: (choice: RuleChoice) => Promise<boolean> }) { const [pendingDelete, setPendingDelete] = useState<RuleChoice | null>(null); const [toast, setToast] = useState<string | null>(null); async function confirmDelete() { if (!pendingDelete || !await onDelete(pendingDelete)) return; setPendingDelete(null); setToast("自定义条件已删除"); window.setTimeout(() => setToast(null), 2600); } return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="rule-modal selector-modal" role="dialog" aria-modal="true" aria-labelledby="rule-selector-title" onMouseDown={(event) => event.stopPropagation()}><div className="rule-panel-header"><h2 id="rule-selector-title">选择筛选条件</h2><button className="modal-close" onClick={onClose} aria-label="关闭">×</button></div><RuleGroup choices={choices} selectedId={selectedId} onChoose={onChoose} onEdit={onEdit} onDelete={setPendingDelete} />{pendingDelete && <ConfirmDialog title="删除自定义条件" message={`删除自定义筛选条件“${pendingDelete.title}”？`} confirmLabel="删除" danger onCancel={() => setPendingDelete(null)} onConfirm={confirmDelete} />}{toast && <Toast message={toast} />}</section></div>; }
-function RuleGroup({ choices, selectedId, onChoose, onEdit, onDelete, empty }: { choices: RuleChoice[]; selectedId: string | null; onChoose: (choice: RuleChoice) => void; onEdit: (choice: RuleChoice) => void; onDelete: (choice: RuleChoice) => void; empty?: string }) { return <section className="rule-group">{choices.length ? <div className="preset-list">{choices.map((choice) => <article className={`rule-choice ${choice.id === selectedId ? "selected" : ""}`} key={choice.id}><button className="rule-choice-main" onClick={() => onChoose(choice)}><span className="rule-choice-heading"><strong>{choice.title}</strong><span className={`category-tag ${choice.category}`}>{choice.category === "preset" ? "预设" : "自定义"}</span></span><span>{choice.description}</span></button>{choice.category === "custom" && <div className="rule-choice-actions"><button onClick={() => onEdit(choice)}>编辑</button><button className="danger-button" onClick={() => onDelete(choice)}>删除</button></div>}</article>)}</div> : empty ? <p className="muted rule-group-empty">{empty}</p> : null}</section>; }
-function CustomEditor({ value, onChange, isEditing, onClose, onFavorite, onConfirm }: { value: CustomConfig; onChange: (next: CustomConfig) => void; isEditing: boolean; onClose: () => void; onFavorite: (title: string) => Promise<boolean>; onConfirm: () => Promise<boolean> }) { const [favoriteOpen, setFavoriteOpen] = useState(false); const [favoriteName, setFavoriteName] = useState("自定义"); const [toast, setToast] = useState<string | null>(null); async function favorite() { if (!await onFavorite(favoriteName)) return; setFavoriteOpen(false); setToast("收藏已保存"); window.setTimeout(() => setToast(null), 2600); } async function confirm() { if (!await onConfirm()) return; setToast(isEditing ? "自定义条件已更新" : "自定义条件已应用"); window.setTimeout(onClose, 900); } return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="rule-modal custom-rule-modal" role="dialog" aria-modal="true" aria-labelledby="custom-editor-title" onMouseDown={(event) => event.stopPropagation()}><div className="rule-panel-header"><h2 id="custom-editor-title">{isEditing ? "编辑自定义条件" : "自定义条件"}</h2><button className="modal-close" onClick={onClose} aria-label="关闭">×</button></div><div className="custom-modal-body"><CustomBuilder value={value} onChange={onChange} /></div><footer className="custom-modal-footer">{!isEditing && <button onClick={() => { setFavoriteName("自定义"); setFavoriteOpen(true); }}>收藏</button>}<button className="primary" onClick={confirm}>确定</button></footer>{favoriteOpen && <NameDialog value={favoriteName} onChange={setFavoriteName} onCancel={() => setFavoriteOpen(false)} onConfirm={favorite} />}{toast && <Toast message={toast} />}</section></div>; }
-function CustomBuilder({ value, onChange }: { value: CustomConfig; onChange: (next: CustomConfig) => void }) { const toggle = (key: keyof CustomConfig) => onChange({ ...value, [key]: !value[key] }); const number = (key: keyof CustomConfig, next: string) => onChange({ ...value, [key]: Number(next) }); return <div className="custom-builder"><p className="muted">已勾选的条件必须同时满足；所有涨幅与偏离均按百分数填写和展示。</p><div className="custom-row exclusion-row"><Check checked={value.excludeSt} onChange={() => toggle("excludeSt")} label="去除 ST" /><Check checked={value.excludeStar} onChange={() => toggle("excludeStar")} label="去除科创板" /><Check checked={value.excludeBj} onChange={() => toggle("excludeBj")} label="去除北交所" /></div><Row enabled={value.limitUp} toggle={() => toggle("limitUp")}><Num value={value.limitDays} change={(v) => number("limitDays", v)} /> 个交易日前涨停</Row><Row enabled={value.klineMa} toggle={() => toggle("klineMa")}><span>最近</span><Num value={value.klineDays} change={(v) => number("klineDays", v)} /><span>个交易日的 K 线未破</span><Num value={value.maDays} change={(v) => number("maDays", v)} /><span>日线</span></Row><Row enabled={value.closeDkx} toggle={() => toggle("closeDkx")}><span>前</span><Num value={value.closeDkxDays} change={(v) => number("closeDkxDays", v)} /><span>天每天的收盘价都在 DKX 之上</span></Row><Row enabled={value.rank} toggle={() => toggle("rank")}><span>近两个月涨幅排名前</span><Num value={value.rankTop} change={(v) => number("rankTop", v)} /></Row><Row enabled={value.dailyRange} toggle={() => toggle("dailyRange")}><span>连续</span><Num value={value.dailyRangeDays} change={(v) => number("dailyRangeDays", v)} /><span>天的涨幅都在</span><Num value={value.dailyRangeLower} change={(v) => number("dailyRangeLower", v)} /><span>% 到</span><Num value={value.dailyRangeUpper} change={(v) => number("dailyRangeUpper", v)} /><span>% 之间</span></Row><Row enabled={value.interval} toggle={() => toggle("interval")}><span>最近</span><Num value={value.intervalDays} change={(v) => number("intervalDays", v)} /><span>个交易日的区间涨幅小于</span><Num value={value.intervalMaximum} change={(v) => number("intervalMaximum", v)} /><span>%</span></Row><Row enabled={value.volumeRatio} toggle={() => toggle("volumeRatio")}><Num value={value.volumeRatioDays} change={(v) => number("volumeRatioDays", v)} /><span>个交易日前的量比大于</span><Num value={value.volumeRatioMinimum} change={(v) => number("volumeRatioMinimum", v)} /></Row><Row enabled={value.deviation} toggle={() => toggle("deviation")}><Num value={value.deviationLower} change={(v) => number("deviationLower", v)} /><span>% &lt; （</span><Num value={value.deviationDaysAgo} change={(v) => number("deviationDaysAgo", v)} /><span>天前收盘价 - </span><Num value={value.deviationDaysAgo} change={(v) => number("deviationDaysAgo", v)} /><span>天前 DKX）/ </span><Num value={value.deviationDaysAgo} change={(v) => number("deviationDaysAgo", v)} /><span>天前 DKX &lt; </span><Num value={value.deviationUpper} change={(v) => number("deviationUpper", v)} /><span>%</span></Row></div>; }
-function Check({ checked, onChange, label }: { checked: boolean; onChange: () => void; label: string }) { return <label className="condition-check"><input type="checkbox" checked={checked} onChange={onChange} />{label}</label>; }
-function Row({ enabled, toggle, children }: { enabled: boolean; toggle: () => void; children: ReactNode }) { return <label className={`custom-row ${enabled ? "enabled" : ""}`}><input type="checkbox" checked={enabled} onChange={toggle} /><span className="custom-row-content">{children}</span></label>; }
-function Num({ value, change }: { value: number; change: (value: string) => void }) { return <input className="condition-number" type="number" value={value} onChange={(event) => change(event.target.value)} />; }
-function Metric({ label, value }: { label: string; value: string }) { return <article className="metric"><span>{label}</span><strong>{value}</strong></article>; }
-function Progress({ job, progress }: { job: Job; progress: number | null }) { return <div className="progress-wrap" aria-live="polite"><div className="progress-caption"><span>{job.status === "queued" ? "等待 Worker" : job.status === "running" ? "正在执行" : job.status === "succeeded" ? "已完成" : "失败"}</span><span>{progress === null ? "准备中" : `${job.progressCurrent} / ${job.progressTotal}（${progress}%）`}</span></div><div className="progress-track"><div className="progress-value" style={{ width: `${progress ?? 4}%` }} /></div></div>; }
-function Results({ result }: { result: ScreeningResult }) { const [stock, setStock] = useState<{ code: string; name: string } | null>(null); const [frameStatus, setFrameStatus] = useState<"loading" | "loaded" | "blocked">("loading"); const [position, setPosition] = useState({ x: 80, y: 80 }); const drag = useRef<{ x: number; y: number; left: number; top: number } | null>(null); useEffect(() => { if (!stock || frameStatus !== "loading") return; const timer = window.setTimeout(() => setFrameStatus("blocked"), 5000); return () => window.clearTimeout(timer); }, [stock, frameStatus]); const url = stock ? `https://stockpage.10jqka.com.cn/${stock.code}/` : ""; function beginDrag(event: React.PointerEvent<HTMLDivElement>) { drag.current = { x: event.clientX, y: event.clientY, left: position.x, top: position.y }; event.currentTarget.setPointerCapture(event.pointerId); } function dragMove(event: React.PointerEvent<HTMLDivElement>) { if (!drag.current) return; setPosition({ x: Math.max(12, drag.current.left + event.clientX - drag.current.x), y: Math.max(12, drag.current.top + event.clientY - drag.current.y) }); } function endDrag() { drag.current = null; } return <><section className="panel"><div className="result-panel-header"><h2>筛选结果</h2><div className="result-actions"><button onClick={() => window.location.assign(`/api/screening-runs/${result.run.id}/export`)}>导出 EBK</button></div></div><p>模式：{result.run.mode === "post_close" ? "盘后" : "盘中"}；数据截至：{result.run.dataAsOf}；命中 {result.run.matchedCount} 只，不可用 {result.run.unavailableCount} 只。</p><table><thead><tr><th>代码</th><th>名称</th><th>状态</th><th>当前价（前复权）</th><th>说明</th></tr></thead><tbody>{result.results.map((row) => { const detail = formatDetail(row.detail); return <tr key={row.stockCode}><td>{row.stockCode}</td><td><button className="stock-link" onClick={() => { setStock({ code: row.stockCode, name: row.name }); setFrameStatus("loading"); }}>{row.name}</button></td><td><span className={`badge ${row.status}`}>{row.status}</span></td><td>{row.currentPrice?.toFixed(2) ?? "—"}</td><td title={detail}>{shortDetail(detail)}</td></tr>; })}</tbody></table></section>{stock && <section className="chart-window" style={{ left: position.x, top: position.y }}><div className="chart-window-header" onPointerDown={beginDrag} onPointerMove={dragMove} onPointerUp={endDrag}><h2>{stock.name} · 同花顺日线</h2><button onPointerDown={(event) => event.stopPropagation()} onClick={() => setStock(null)}>关闭</button></div><div className="chart-window-body">{frameStatus === "blocked" ? <div className="iframe-fallback"><p>同花顺不允许在当前页面嵌入，已切换为新标签页打开。</p><a className="button-link" href={url} target="_blank" rel="noreferrer">在新标签页打开同花顺</a></div> : <><p className="muted">{frameStatus === "loading" ? "正在加载同花顺行情…" : ""}</p><iframe className="stock-chart-frame" title={`${stock.name} 同花顺行情`} src={url} onLoad={() => setFrameStatus("loaded")} /></>}</div></section>}</>; }
-function buildCustomDefinition(c: CustomConfig) { const conditions: Array<Record<string, number | string>> = []; if (c.excludeSt) conditions.push({ type: "exclude_st" }); if (c.excludeStar) conditions.push({ type: "exclude_star" }); if (c.excludeBj) conditions.push({ type: "exclude_bj" }); if (c.limitUp) conditions.push({ type: "limit_up_days_ago", days_ago: c.limitDays }); if (c.klineMa) conditions.push({ type: "kline_above_ma", days: c.klineDays, ma_days: c.maDays }); if (c.closeDkx) conditions.push({ type: "close_above_dkx_days", days: c.closeDkxDays }); if (c.rank) conditions.push({ type: "two_month_return_rank", top: c.rankTop }); if (c.dailyRange) conditions.push({ type: "daily_return_range", days: c.dailyRangeDays, lower: c.dailyRangeLower, upper: c.dailyRangeUpper }); if (c.interval) conditions.push({ type: "interval_return_below", days: c.intervalDays, maximum: c.intervalMaximum }); if (c.volumeRatio) conditions.push({ type: "volume_ratio_days_ago", days_ago: c.volumeRatioDays, minimum: c.volumeRatioMinimum }); if (c.deviation) conditions.push({ type: "close_dkx_deviation", lower: c.deviationLower, days_ago: c.deviationDaysAgo, upper: c.deviationUpper }); return { version: 1, operator: "all" as const, conditions }; }
-function customSummary(c: CustomConfig) { const parts: string[] = []; if (c.excludeSt) parts.push("去除 ST"); if (c.excludeStar) parts.push("去除科创板"); if (c.excludeBj) parts.push("去除北交所"); if (c.limitUp) parts.push(`${c.limitDays} 个交易日前涨停`); if (c.klineMa) parts.push(`最近 ${c.klineDays} 个交易日 K 线未破 MA${c.maDays}`); if (c.closeDkx) parts.push(`前 ${c.closeDkxDays} 天收盘价都在 DKX 之上`); if (c.rank) parts.push(`近两个月涨幅排名前 ${c.rankTop}`); if (c.dailyRange) parts.push(`连续 ${c.dailyRangeDays} 天涨幅在 ${c.dailyRangeLower}% 到 ${c.dailyRangeUpper}%`); if (c.interval) parts.push(`最近 ${c.intervalDays} 个交易日区间涨幅小于 ${c.intervalMaximum}%`); if (c.volumeRatio) parts.push(`${c.volumeRatioDays} 个交易日前量比大于 ${c.volumeRatioMinimum}`); if (c.deviation) parts.push(`${c.deviationLower}% < ${c.deviationDaysAgo} 天前收盘价相对 DKX 偏离 < ${c.deviationUpper}%`); return parts.join("；") || "尚未启用任何条件"; }
-function summarize(summary: string | null | undefined) { try { const value = JSON.parse(summary ?? "{}") as Record<string, unknown>; return value.current ? String(value.current) : "任务已完成"; } catch { return "任务已完成"; } }
-function formatDetail(detail: string): string { try { const data = JSON.parse(detail) as { reason?: string; conditions?: Array<{ message: string }> }; return data.reason ?? data.conditions?.map((item) => item.message).join("；") ?? "—"; } catch { return "—"; } }
-function shortDetail(detail: string) { return detail.length > 18 ? `${detail.slice(0, 18)}...` : detail; }
-
-function NameDialog({ value, onChange, onCancel, onConfirm }: { value: string; onChange: (value: string) => void; onCancel: () => void; onConfirm: () => void }) { return <div className="inline-dialog-backdrop"><section className="inline-dialog" role="dialog" aria-modal="true" aria-labelledby="collection-name-title"><h3 id="collection-name-title">收藏自定义条件</h3><label>名称<input autoFocus value={value} maxLength={40} onChange={(event) => onChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") onConfirm(); }} /></label><div className="inline-dialog-actions"><button onClick={onCancel}>取消</button><button className="primary" disabled={!value.trim()} onClick={onConfirm}>保存</button></div></section></div>; }
-function ConfirmDialog({ title, message, confirmLabel, danger, onCancel, onConfirm }: { title: string; message: string; confirmLabel: string; danger?: boolean; onCancel: () => void; onConfirm: () => void }) { return <div className="inline-dialog-backdrop"><section className="inline-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-dialog-title"><h3 id="confirm-dialog-title">{title}</h3><p>{message}</p><div className="inline-dialog-actions"><button onClick={onCancel}>取消</button><button className={danger ? "danger-primary" : "primary"} onClick={onConfirm}>{confirmLabel}</button></div></section></div>; }
-function Toast({ message }: { message: string }) { return <div className="toast" role="status">{message}</div>; }
+function summarize(summary: string | null | undefined) {
+  try {
+    const value = JSON.parse(summary ?? "{}") as Record<string, unknown>;
+    return value.current ? String(value.current) : "任务已完成";
+  } catch {
+    return "任务已完成";
+  }
+}
