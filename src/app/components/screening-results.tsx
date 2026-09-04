@@ -9,6 +9,10 @@ export function ScreeningResults({ result }: { result: ScreeningResult }) {
     null,
   );
   const [use10jqka, setUse10jqka] = useState(false);
+  const [quote, setQuote] = useState<{
+    price: number;
+    changePercent: number;
+  } | null>(null);
   const [position, setPosition] = useState({ x: 80, y: 80 });
   const drag = useRef<{
     x: number;
@@ -17,6 +21,14 @@ export function ScreeningResults({ result }: { result: ScreeningResult }) {
     top: number;
   } | null>(null);
   const url = stock ? `https://stockpage.10jqka.com.cn/${stock.code}/` : "";
+  const f10Url = stock ? `https://basic.10jqka.com.cn/${stock.code}/` : "";
+  const stockIndex = stock
+    ? result.results.findIndex((row) => row.stockCode === stock.code)
+    : -1;
+
+  useEffect(() => {
+    setQuote(null);
+  }, [stock?.code]);
 
   function beginDrag(event: React.PointerEvent<HTMLDivElement>) {
     drag.current = {
@@ -126,9 +138,27 @@ export function ScreeningResults({ result }: { result: ScreeningResult }) {
             onPointerMove={dragMove}
             onPointerUp={endDrag}
           >
-            <h2>
-              {stock.name} · {stock.code} · 日线
-            </h2>
+            <div className="chart-stock-summary">
+              <h2>
+                {stock.name} · {stock.code}
+              </h2>
+              {quote && (
+                <p
+                  className={
+                    quote.changePercent > 0
+                      ? "positive"
+                      : quote.changePercent < 0
+                        ? "negative"
+                        : "flat"
+                  }
+                >
+                  {quote.price.toFixed(2)}{" "}
+                  {quote.changePercent < 0 ? "↓" : "↑"}{" "}
+                  {quote.changePercent > 0 ? "+" : ""}
+                  {quote.changePercent.toFixed(2)}%
+                </p>
+              )}
+            </div>
             <div
               className="chart-window-actions"
               onPointerDown={(event) => event.stopPropagation()}
@@ -136,10 +166,18 @@ export function ScreeningResults({ result }: { result: ScreeningResult }) {
               <button
                 className="open-external"
                 onClick={() =>
+                  window.open(f10Url, "_blank", "noopener,noreferrer")
+                }
+              >
+                F10
+              </button>
+              <button
+                className="open-external"
+                onClick={() =>
                   window.open(url, "_blank", "noopener,noreferrer")
                 }
               >
-                在同花顺打开
+                同花顺打开
               </button>
               <button
                 onPointerDown={(event) => event.stopPropagation()}
@@ -150,7 +188,31 @@ export function ScreeningResults({ result }: { result: ScreeningResult }) {
             </div>
           </div>
           <div className="chart-window-body">
-            <LocalKline code={stock.code} />
+            <LocalKline code={stock.code} onQuote={setQuote} />
+            <div className="chart-navigation">
+              <button
+                disabled={stockIndex <= 0}
+                onClick={() => {
+                  const previous = result.results[stockIndex - 1];
+                  if (previous) {
+                    setStock({ code: previous.stockCode, name: previous.name });
+                  }
+                }}
+              >
+                上一个
+              </button>
+              <button
+                disabled={
+                  stockIndex < 0 || stockIndex >= result.results.length - 1
+                }
+                onClick={() => {
+                  const next = result.results[stockIndex + 1];
+                  if (next) setStock({ code: next.stockCode, name: next.name });
+                }}
+              >
+                下一个
+              </button>
+            </div>
           </div>
         </section>
       )}
@@ -178,8 +240,18 @@ function shortDetail(detail: string) {
   return detail.length > 18 ? `${detail.slice(0, 18)}...` : detail;
 }
 
-function LocalKline({ code }: { code: string }) {
+function LocalKline({
+  code,
+  onQuote,
+}: {
+  code: string;
+  onQuote: (quote: { price: number; changePercent: number } | null) => void;
+}) {
   const [bars, setBars] = useState<StockBar[] | null>(null);
+  const [stockInfo, setStockInfo] = useState<
+    | { reason: string | null; industry: string | null }
+    | undefined
+  >(undefined);
   const [viewport, setViewport] = useState({ start: 0, count: 90 });
   const svgRef = useRef<SVGSVGElement>(null);
   const viewportRef = useRef(viewport);
@@ -191,10 +263,39 @@ function LocalKline({ code }: { code: string }) {
     void fetch(`/api/stocks/${code}?days=90`, { cache: "no-store" })
       .then((response) => (response.ok ? response.json() : null))
       .then((data) => {
-        const nextBars = data?.bars ? [...data.bars].reverse() : [];
+        const nextBars: StockBar[] = data?.bars ? [...data.bars].reverse() : [];
+        if (data?.intradayBar) nextBars.push(data.intradayBar as StockBar);
+        const latest = nextBars.at(-1);
+        if (
+          latest?.rawClose !== null &&
+          latest?.rawClose !== undefined &&
+          latest.preClose !== null &&
+          latest.preClose !== undefined &&
+          latest.preClose > 0
+        ) {
+          onQuote({
+            price: latest.rawClose,
+            changePercent: ((latest.rawClose / latest.preClose) - 1) * 100,
+          });
+        } else {
+          onQuote(null);
+        }
         setBars(nextBars);
         setViewport({ start: 0, count: nextBars.length || 90 });
       });
+  }, [code]);
+
+  useEffect(() => {
+    setStockInfo(undefined);
+    void fetch(`/api/stocks/${code}/limit-up-reason`, { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) =>
+        setStockInfo({
+          reason: data?.reason ?? null,
+          industry: data?.industry ?? null,
+        }),
+      )
+      .catch(() => setStockInfo({ reason: null, industry: null }));
   }, [code]);
 
   useEffect(() => {
@@ -285,7 +386,13 @@ function LocalKline({ code }: { code: string }) {
   };
 
   return (
-    <svg
+    <>
+      <p className="limit-up-reason">
+        {stockInfo === undefined
+          ? "正在查询行业和最近涨停原因…"
+          : `行业：${stockInfo.industry ?? "暂无"}　最近涨停原因：${stockInfo.reason ?? "暂无"}`}
+      </p>
+      <svg
       ref={svgRef}
       className="local-kline"
       viewBox={`0 0 ${width} ${height}`}
@@ -325,7 +432,21 @@ function LocalKline({ code }: { code: string }) {
             limitPriceCents !== null &&
             bar.rawClose !== null &&
             Math.round(bar.rawClose * 100) >= limitPriceCents,
-          upColor = limitUp ? "#8b5cf6" : "#ef3340",
+          limitDownPriceCents =
+            preCloseCents === null
+              ? null
+              : Math.round(preCloseCents * (1 - limitRatio)),
+          limitDown =
+            limitDownPriceCents !== null &&
+            bar.rawClose !== null &&
+            Math.round(bar.rawClose * 100) <= limitDownPriceCents,
+          candleColor = limitUp
+            ? "#8b5cf6"
+            : limitDown
+              ? "#000"
+              : up
+                ? "#ef3340"
+                : "#16803c",
           bodyTop = y(Math.max(bar.openQfq, bar.closeQfq)),
           bodyHeight = Math.max(1, Math.abs(y(bar.openQfq) - y(bar.closeQfq)));
         return (
@@ -335,15 +456,15 @@ function LocalKline({ code }: { code: string }) {
               x2={x}
               y1={y(bar.highQfq)}
               y2={y(bar.lowQfq)}
-              stroke={up ? upColor : "#16803c"}
+              stroke={candleColor}
             />
             <rect
               x={x - step * 0.3}
               y={bodyTop}
               width={Math.max(1, step * 0.6)}
               height={bodyHeight}
-              fill={up ? "#fff" : "#16803c"}
-              stroke={up ? upColor : "#16803c"}
+              fill={up && !limitDown ? "#fff" : candleColor}
+              stroke={candleColor}
             />
             <rect
               x={x - step * 0.3}
@@ -353,7 +474,7 @@ function LocalKline({ code }: { code: string }) {
               }
               width={Math.max(1, step * 0.6)}
               height={(bar.volume / maxVolume) * (volumeBottom - volumeTop)}
-              fill={up ? upColor : "#16803c"}
+              fill={candleColor}
             />
           </g>
         );
@@ -374,9 +495,7 @@ function LocalKline({ code }: { code: string }) {
       <text x="413" y="28" fill="#000" fontSize="20">
         DKX {latest.dkx?.toFixed(2) ?? "-"}
       </text>
-      <text x="8" y="510" fill="#5d6b82" fontSize="12">
-        成交量
-      </text>
-    </svg>
+      </svg>
+    </>
   );
 }
