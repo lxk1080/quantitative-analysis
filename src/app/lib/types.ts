@@ -55,6 +55,7 @@ export type RuleChoice = {
 };
 
 export type ScreeningResult = {
+  snapshotCapturedAt?: string | null;
   run: {
     id: string;
     matchedCount: number;

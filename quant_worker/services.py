@@ -264,7 +264,7 @@ def _get_intraday_snapshot(connection: sqlite3.Connection, job_id: str, provider
     frozen_close = local_time >= time(15, 0)
     cached = _load_fresh_snapshot(freeze_after_close=frozen_close)
     if cached:
-        policy = "frozen after-close snapshot" if frozen_close else "snapshot younger than 5 minutes"
+        policy = "frozen after-close snapshot" if frozen_close else "snapshot younger than 10 minutes"
         _write_audit(connection, job_id, "realtime_cache_hit", f"reused {len(cached)} records: {policy}", cached[0].provider_name)
         return cached, True
     snapshot = provider.fetch_market_snapshot()

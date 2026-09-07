@@ -12,7 +12,7 @@ CACHE_PATH = PROJECT_ROOT / "caches"
 # otherwise mature stock lose its moving average.
 RETAINED_TRADING_DAYS = 90
 INDICATOR_VERSION = "ma-dkx-ths-v2"
-REALTIME_CACHE_TTL_SECONDS = 5 * 60
+REALTIME_CACHE_TTL_SECONDS = 10 * 60
 SHANGHAI_TIMEZONE = "Asia/Shanghai"
 
 

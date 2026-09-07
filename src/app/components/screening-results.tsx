@@ -79,8 +79,16 @@ export function ScreeningResults({ result }: { result: ScreeningResult }) {
         </div>
         <p>
           模式：{result.run.mode === "post_close" ? "盘后" : "盘中"}；数据截至：
-          {result.run.dataAsOf}；命中 {result.run.matchedCount} 只，不可用{" "}
-          {result.run.unavailableCount} 只。
+          {result.run.dataAsOf}；
+          {result.run.mode !== "post_close" && (
+            <>盘中快照拉取时间：{result.snapshotCapturedAt
+              ? new Intl.DateTimeFormat("zh-CN", {
+                  timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit",
+                  hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+                }).format(new Date(result.snapshotCapturedAt))
+              : "暂无当天快照"}；</>
+          )}
+          命中 {result.run.matchedCount} 只，不可用 {result.run.unavailableCount} 只
         </p>
         <table>
           <thead>
@@ -253,6 +261,7 @@ function LocalKline({
     | undefined
   >(undefined);
   const [viewport, setViewport] = useState({ start: 0, count: 90 });
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const viewportRef = useRef(viewport);
   const panRef = useRef<{ x: number; start: number } | null>(null);
@@ -260,6 +269,7 @@ function LocalKline({
 
   useEffect(() => {
     setBars(null);
+    setSelectedDate(null);
     void fetch(`/api/stocks/${code}?days=90`, { cache: "no-store" })
       .then((response) => (response.ok ? response.json() : null))
       .then((data) => {
@@ -335,6 +345,19 @@ function LocalKline({
     volumeTop = 415,
     volumeBottom = 495,
     step = width / visibleBars.length;
+  const selectedIndex = visibleBars.findIndex((bar) => bar.tradeDate === selectedDate);
+  const selectedX = (selectedIndex + 0.5) * step;
+  const labelWidth = 190;
+  const labelX = Math.max(2, Math.min(width - labelWidth - 2, selectedX - labelWidth / 2));
+  const selectDate = (event: React.MouseEvent<SVGSVGElement>) => {
+    const matrix = event.currentTarget.getScreenCTM();
+    if (!matrix) return;
+    // 使用 SVG 坐标变换，兼容等比缩放产生的留白。
+    const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix.inverse());
+    if (point.x < 0 || point.x > width || point.y < top || point.y > volumeBottom) return;
+    const index = Math.min(visibleBars.length - 1, Math.floor(point.x / step));
+    setSelectedDate(visibleBars[index].tradeDate);
+  };
   const values = visibleBars.flatMap((bar) => [
     bar.lowQfq,
     bar.highQfq,
@@ -367,6 +390,7 @@ function LocalKline({
     event.currentTarget.setPointerCapture(event.pointerId);
   };
   const movePan = (event: React.PointerEvent<SVGSVGElement>) => {
+    if (selectedDate !== null) selectDate(event);
     if (!panRef.current) return;
     const width = event.currentTarget.getBoundingClientRect().width;
     const offset = Math.round(
@@ -395,12 +419,20 @@ function LocalKline({
       <svg
       ref={svgRef}
       className="local-kline"
+      style={selectedDate !== null ? { cursor: 'url("/cursors/small-crosshair.svg") 8 8, crosshair' } : undefined}
       viewBox={`0 0 ${width} ${height}`}
       preserveAspectRatio="xMidYMid meet"
       onPointerDown={beginPan}
       onPointerMove={movePan}
       onPointerUp={endPan}
       onPointerCancel={endPan}
+      onDoubleClick={(event) => {
+        if (selectedDate !== null) {
+          setSelectedDate(null);
+        } else {
+          selectDate(event);
+        }
+      }}
     >
       <rect width={width} height={height} fill="#fff" />
       {[0, 0.25, 0.5, 0.75, 1].map((rate) => (
@@ -495,6 +527,18 @@ function LocalKline({
       <text x="413" y="28" fill="#000" fontSize="20">
         DKX {latest.dkx?.toFixed(2) ?? "-"}
       </text>
+      {selectedIndex >= 0 && selectedDate && (
+        <g pointerEvents="none">
+          <line
+            x1={selectedX} x2={selectedX}
+            y1={top} y2={volumeBottom}
+            stroke="#333" strokeDasharray="5 5"
+          />
+          <text x={labelX + labelWidth / 2} y={514} textAnchor="middle" fill="#000" fontSize={16}>
+            {selectedDate} {new Intl.DateTimeFormat("zh-CN", { weekday: "long", timeZone: "UTC" }).format(new Date(`${selectedDate}T00:00:00Z`))}
+          </text>
+        </g>
+      )}
       </svg>
     </>
   );

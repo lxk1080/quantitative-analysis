@@ -40,12 +40,6 @@ const shanghaiDateFormatter = new Intl.DateTimeFormat("en-CA", {
   month: "2-digit",
   day: "2-digit",
 });
-const shanghaiTimeFormatter = new Intl.DateTimeFormat("en-GB", {
-  timeZone: "Asia/Shanghai",
-  hour: "2-digit",
-  minute: "2-digit",
-  hourCycle: "h23",
-});
 
 function shanghaiDate(value: string | Date) {
   const parts = shanghaiDateFormatter.formatToParts(new Date(value));
@@ -63,13 +57,8 @@ function canUseSnapshot(capturedAt: string) {
   ) {
     return false;
   }
-  const [hour, minute] = shanghaiTimeFormatter
-    .format(now)
-    .split(":")
-    .map(Number);
-  const afterClose = hour > 15 || (hour === 15 && minute >= 0);
-  if (afterClose) return shanghaiTimeFormatter.format(captured) >= "15:00";
-  return now.getTime() - captured.getTime() <= 5 * 60 * 1000;
+  // 图表展示当天最后一次获取的状态；10 分钟有效期仅用于筛选时刷新行情。
+  return true;
 }
 
 function average(values: number[], days: number) {

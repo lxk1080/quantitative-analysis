@@ -275,8 +275,7 @@ export default function HomePage() {
       setMessage("收藏保存失败，请重试。");
       return false;
     }
-    const saved = (await response.json()) as { id: string };
-    setEditingCollectionId(saved.id);
+    // 收藏保存一份副本；只有从列表点击编辑才进入编辑模式。
     await loadChoices();
     return true;
   }
