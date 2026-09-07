@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal, ROUND_HALF_UP
-from datetime import datetime, time
 from typing import Any
-from zoneinfo import ZoneInfo
 
 
 def _result(condition: dict[str, Any], status: str, values: dict[str, Any], message: str) -> Any:
@@ -17,24 +15,12 @@ def _unavailable(condition: dict[str, Any], message: str) -> Any:
 
 def _offset_bar(context: dict[str, Any], offset: int) -> dict[str, Any] | None:
     bars = context.get("bars", [])
-    # The intraday snapshot represents day 0, but it is deliberately not a
-    # persisted daily bar.  Stored bars therefore start at yesterday (day 1).
-    if context.get("mode") == "intraday":
-        return bars[-offset] if offset >= 1 and len(bars) >= offset else None
     return bars[-1 - offset] if offset >= 0 and len(bars) > offset else None
 
 
 def _limit_price(pre_close: float, code: str) -> Decimal:
     ratio = Decimal("0.20") if code.startswith(("300", "301")) else Decimal("0.10")
     return (Decimal(str(pre_close)) * (Decimal("1") + ratio)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-
-
-def _trading_minutes_now() -> int:
-    now = datetime.now(ZoneInfo("Asia/Shanghai")).time()
-    today = datetime.today()
-    morning = max(0, min(120, int((datetime.combine(today, now) - datetime.combine(today, time(9, 30))).total_seconds() // 60)))
-    afternoon = max(0, min(120, int((datetime.combine(today, now) - datetime.combine(today, time(13, 0))).total_seconds() // 60)))
-    return morning + afternoon
 
 
 def evaluate_custom_condition(condition: dict[str, Any], context: dict[str, Any]) -> Any | None:
@@ -53,14 +39,6 @@ def evaluate_custom_condition(condition: dict[str, Any], context: dict[str, Any]
 
     if kind == "limit_up_days_ago":
         offset = int(condition.get("days_ago", 3))
-        if context.get("mode") == "intraday" and offset == 0:
-            quote = context.get("intraday_quote") or {}
-            raw_close, pre_close = quote.get("raw_last_price"), quote.get("raw_pre_close")
-            if raw_close is None or pre_close is None or float(pre_close) <= 0:
-                return _unavailable(condition, "缺少当日实时价格或昨收价")
-            target = _limit_price(float(pre_close), code)
-            matched = Decimal(str(raw_close)) + Decimal("0.005") >= target
-            return _result(condition, "matched" if matched else "not_matched", {"close": raw_close, "limit_price": float(target)}, f"当日{'涨停' if matched else '未涨停'}")
         bar = _offset_bar(context, offset)
         if bar is None:
             return _unavailable(condition, "日线不足，无法判断涨停")
@@ -111,33 +89,20 @@ def evaluate_custom_condition(condition: dict[str, Any], context: dict[str, Any]
         bars = context.get("bars", [])
         if offset < 0:
             return _unavailable(condition, "交易日前不能小于 0")
-        if context.get("mode") == "intraday" and offset == 0:
-            quote = context.get("intraday_quote") or {}
-            volume, minutes = quote.get("volume"), _trading_minutes_now()
-            baseline = bars[-5:]
-            if volume is None or float(volume) <= 0 or minutes <= 0 or len(baseline) < 5:
-                return _unavailable(condition, "缺少当日成交量或前 5 日成交量")
-            average = sum(float(item.get("volume") or 0) for item in baseline) / 5
-            ratio = (float(volume) / minutes) / (average / 240) if average > 0 else None
-        else:
-            index = len(bars) - offset if context.get("mode") == "intraday" else len(bars) - 1 - offset
-            if index < 5 or index >= len(bars):
-                return _unavailable(condition, "日线不足，无法计算量比")
-            average = sum(float(item.get("volume") or 0) for item in bars[index - 5:index]) / 5
-            ratio = float(bars[index].get("volume") or 0) / average if average > 0 else None
+        index = len(bars) - 1 - offset
+        if index < 5 or index >= len(bars):
+            return _unavailable(condition, "日线不足，无法计算量比")
+        minutes = float(bars[index].get("trading_minutes", 240))
+        if minutes <= 0:
+            return _unavailable(condition, "缺少有效交易时长")
+        average = sum(float(item.get("volume") or 0) for item in bars[index - 5:index]) / 5
+        ratio = (float(bars[index].get("volume") or 0) / minutes) / (average / 240) if average > 0 else None
         if ratio is None:
             return _unavailable(condition, "前 5 日平均成交量为零")
         return _result(condition, "matched" if ratio > minimum else "not_matched", {"volume_ratio": ratio}, f"{offset} 个交易日前量比 {ratio:.2f}")
 
     if kind == "close_dkx_deviation":
         offset, lower, upper = int(condition.get("days_ago", 0)), float(condition.get("lower", -2)), float(condition.get("upper", 5))
-        if context.get("mode") == "intraday" and offset == 0:
-            quote = context.get("intraday_quote") or {}
-            close, dkx = quote.get("qfq_price"), quote.get("dkx")
-            if close is None or dkx is None or float(dkx) == 0:
-                return _unavailable(condition, "缺少当日实时价格或 DKX 指标")
-            change = (float(close) - float(dkx)) / float(dkx) * 100
-            return _result(condition, "matched" if lower < change < upper else "not_matched", {"deviation": change}, f"当日收盘价相对 DKX 偏离 {change:.2f}%")
         bar = _offset_bar(context, offset)
         if bar is None or bar.get("close_qfq") is None or bar.get("dkx") is None or float(bar["dkx"]) == 0: return _unavailable(condition, "缺少收盘价或 DKX 指标")
         change = (float(bar["close_qfq"]) - float(bar["dkx"])) / float(bar["dkx"]) * 100

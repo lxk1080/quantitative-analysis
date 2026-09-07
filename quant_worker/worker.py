@@ -10,6 +10,7 @@ from typing import Any
 
 from quant_worker.database import transaction, utc_now
 from quant_worker.rules import evaluate_rule
+from quant_worker.screening_data import build_screening_bars
 from quant_worker.services import ensure_screening_data, sync_daily_bars, sync_realtime_quotes
 
 
@@ -41,20 +42,13 @@ def _latest_context(connection: sqlite3.Connection, security: sqlite3.Row, mode:
     ).fetchall()
     if len(rows) < 2:
         return None
-    bars = [dict(row) for row in rows]
-    current_price = float(rows[-1]["close_qfq"])
     intraday_quote: dict[str, float] | None = None
     if mode == "intraday":
         intraday_quote = (intraday_prices or {}).get(code)
         if intraday_quote is None:
             return None
-        current_price = intraday_quote["qfq_price"]
-        mids = [(3 * float(bar["close_qfq"]) + float(bar["open_qfq"]) + float(bar["high_qfq"]) + float(bar["low_qfq"])) / 6 for bar in bars]
-        current_mid = (3 * current_price + intraday_quote["qfq_open"] + intraday_quote["qfq_high"] + intraday_quote["qfq_low"]) / 6
-        mids.append(current_mid)
-        intraday_quote["dkx"] = (sum((20 - offset) * mids[-1 - offset] for offset in range(19)) + mids[-21]) / 210 if len(mids) >= 21 else 0.0
-    return {"bars": bars, "indicators": bars, "current_price": current_price, "mode": mode,
-            "intraday_quote": intraday_quote,
+    bars = build_screening_bars(code, [dict(row) for row in rows], intraday_quote)
+    return {"bars": bars, "indicators": bars, "current_price": float(bars[-1]["close_qfq"]),
             "security": {"code": code, "exchange": security["exchange"], "is_st": bool(security["is_st"])}}
 
 
@@ -69,7 +63,7 @@ def run_screening(connection: sqlite3.Connection, payload: dict[str, Any], job_i
     conditions = definition.get("conditions", [])
     include_st = rule_id == "custom-rule" and not any(item.get("type") == "exclude_st" for item in conditions if isinstance(item, dict))
     # A screening task is self-sufficient: backfill history first, then use a
-    # <=5-minute intraday cache before 15:00 or persist today's close after it.
+    # configured intraday cache or the authoritative daily data when available.
     mode, intraday_prices = ensure_screening_data(connection, job_id, int(payload.get("max_workers", 4)), include_st=include_st)
     latest_date = connection.execute("SELECT MAX(trade_date) AS value FROM daily_bars").fetchone()["value"]
     if latest_date is None:

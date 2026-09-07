@@ -34,7 +34,7 @@ export async function POST(request: Request) {
   const now = new Date().toISOString();
   rawDb.prepare(
     "INSERT INTO sync_jobs(id, kind, payload_json, status, created_at) VALUES (?, 'screening', ?, 'queued', ?)",
-  ).run(id, JSON.stringify({ rule_id: actualRuleId, mode: parsed.data.mode, definition: actualDefinition }), now);
+  ).run(id, JSON.stringify({ rule_id: actualRuleId, rule_title: collection?.title, mode: parsed.data.mode, definition: actualDefinition }), now);
   launchWorkerOnce();
   return NextResponse.json({ jobId: id }, { status: 202 });
 }

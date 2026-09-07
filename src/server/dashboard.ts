@@ -59,10 +59,14 @@ export function getRun(runId: string) {
 
 export function getRunEbk(runId: string): { fileName: string; content: string } | null {
   const run = rawDb.prepare(
-    `SELECT r.data_as_of AS dataAsOf, rule.name AS ruleName
+    `SELECT COALESCE(
+         (SELECT NULLIF(TRIM(json_extract(j.payload_json, '$.rule_title')), '')
+          FROM sync_jobs j
+          WHERE j.kind='screening' AND json_extract(j.summary_json, '$.run_id')=r.id
+          LIMIT 1), NULLIF(TRIM(rule.name), ''), '自定义条件') AS ruleName
        FROM screening_runs r JOIN screening_rules rule ON rule.id=r.rule_id
        WHERE r.id=?`,
-  ).get(runId) as { dataAsOf: string; ruleName: string } | undefined;
+  ).get(runId) as { ruleName: string } | undefined;
   if (!run) return null;
   const rows = rawDb.prepare(
     `SELECT s.code, s.exchange
@@ -74,6 +78,12 @@ export function getRunEbk(runId: string): { fileName: string; content: string } 
     const prefix = exchange === "SH" ? "1" : exchange === "SZ" ? "0" : null;
     return prefix ? [`${prefix}${code}`] : [];
   });
-  const date = run.dataAsOf.replaceAll("-", "");
-  return { fileName: `${run.ruleName}-${date}.EBK`, content: lines.length ? `${lines.join("\r\n")}\r\n` : "" };
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Shanghai", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).formatToParts(new Date());
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value ?? "";
+  const date = `${part("month")}${part("day")}-${part("hour")}${part("minute")}`;
+  const name = run.ruleName.replace(/[<>:"/\\|?*\x00-\x1f]/g, "_");
+  return { fileName: `${name}-${date}.EBK`, content: lines.length ? `${lines.join("\r\n")}\r\n` : "" };
 }

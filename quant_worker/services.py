@@ -259,6 +259,25 @@ def _load_fresh_snapshot(*, freeze_after_close: bool) -> list[MarketSnapshotBarI
     return None
 
 
+def _prune_snapshot_cache() -> None:
+    """Keep only the five newest timestamped snapshots after a successful save."""
+    snapshots = []
+    for candidate in CACHE_PATH.glob("realtime-snapshot-*.json"):
+        if not candidate.is_file() or candidate.is_symlink():
+            continue
+        try:
+            datetime.strptime(candidate.name, "realtime-snapshot-%Y%m%d-%H%M%S.json")
+        except ValueError:
+            continue
+        snapshots.append(candidate)
+    for candidate in sorted(snapshots, reverse=True)[5:]:
+        try:
+            candidate.unlink(missing_ok=True)
+        except OSError:
+            # A locked cache file must not prevent screening; retry next save.
+            continue
+
+
 def _get_intraday_snapshot(connection: sqlite3.Connection, job_id: str, provider: AkshareProvider) -> tuple[list[MarketSnapshotBarInput], bool]:
     local_time = datetime.now(ZoneInfo(SHANGHAI_TIMEZONE)).time()
     frozen_close = local_time >= time(15, 0)
@@ -273,6 +292,7 @@ def _get_intraday_snapshot(connection: sqlite3.Connection, job_id: str, provider
     temporary = target.with_suffix(".tmp")
     temporary.write_text(json.dumps(_snapshot_to_json(snapshot), ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     temporary.replace(target)
+    _prune_snapshot_cache()
     _write_audit(connection, job_id, "realtime_cache_saved", f"saved {len(snapshot)} records to {target.name}", snapshot[0].provider_name)
     return snapshot, False
 
@@ -293,6 +313,7 @@ def _snapshot_qfq_prices(connection: sqlite3.Connection, snapshot: list[MarketSn
         if factor > 0:
             prices[item.stock_code] = {
                 "qfq_price": item.last_price * factor,
+                "captured_timestamp": item.quote_time.timestamp(),
                 "raw_last_price": item.last_price,
                 "raw_pre_close": item.pre_close or 0.0,
                 "volume": float(item.volume or 0),

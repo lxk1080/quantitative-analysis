@@ -51,23 +51,25 @@ class RuleTests(unittest.TestCase):
         result = evaluate_rule({"operator": "all", "conditions": [{"type": "preset", "preset_id": "n_pattern"}]}, context)
         self.assertEqual(result.status, "not_matched")
 
-    def test_n_pattern_uses_yesterday_as_one_day_ago_during_intraday_screening(self) -> None:
+    def test_n_pattern_uses_three_day_offset_with_today_in_sequence(self) -> None:
         bars = [
             {"trade_date": "2026-08-26", "low_qfq": 10.3, "ma5": 9.9},
             {"trade_date": "2026-08-27", "raw_close": 11.0, "pre_close": 10.0, "low_qfq": 10.5, "ma5": 10.0},
             {"trade_date": "2026-08-28", "low_qfq": 10.5, "ma5": 10.0},
             {"trade_date": "2026-09-01", "low_qfq": 10.6, "ma5": 10.1},
+            {"trade_date": "2026-09-02", "low_qfq": 10.7, "ma5": 10.2},
         ]
         context = {"current_price": 10.8, "mode": "intraday", "security": {"code": "000001", "exchange": "SZ", "is_st": False}, "bars": bars, "indicators": bars}
         result = evaluate_rule({"operator": "all", "conditions": [{"type": "preset", "preset_id": "n_pattern"}]}, context)
         self.assertEqual(result.status, "matched")
 
-    def test_custom_today_limit_up_uses_intraday_raw_snapshot(self) -> None:
+    def test_custom_today_limit_up_uses_latest_unified_bar(self) -> None:
         context = {
             "mode": "intraday",
             "security": {"code": "000001", "exchange": "SZ", "is_st": False},
             "intraday_quote": {"raw_last_price": 11.0, "raw_pre_close": 10.0, "qfq_price": 11.0},
-            "bars": [{"trade_date": "2026-09-01", "close_qfq": 10.0}],
+            "bars": [{"trade_date": "2026-09-01", "close_qfq": 10.0},
+                     {"trade_date": "2026-09-02", "close_qfq": 11.0, "raw_close": 11.0, "pre_close": 10.0}],
             "indicators": [],
         }
         result = evaluate_rule({"operator": "all", "conditions": [{"type": "limit_up_days_ago", "days_ago": 0}]}, context)

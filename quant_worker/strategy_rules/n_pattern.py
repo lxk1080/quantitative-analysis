@@ -24,7 +24,7 @@ def _limit_price(pre_close: float, ratio: Decimal) -> Decimal:
 
 
 def evaluate_n_pattern(condition: dict[str, Any], context: dict[str, Any]) -> Any:
-    """Evaluate the preset N-pattern strategy against completed daily bars.
+    """Evaluate the preset N-pattern strategy against the unified daily bars.
 
     A K-line "does not break MA5" means its low is at or above MA5.  The
     limit-up comparison deliberately uses the Tushare raw close/pre-close
@@ -41,12 +41,7 @@ def evaluate_n_pattern(condition: dict[str, Any], context: dict[str, Any]) -> An
     if len(bars) < 4:
         return _result(condition, "unavailable", {}, "日线不足，无法判断 3 个交易日前涨停")
 
-    # Before 16:00 the latest persisted daily bar is yesterday, while the
-    # screening date is today.  Therefore "3 trading days ago" is bars[-3]
-    # intraday (not bars[-4]); after close today's bar is persisted and the
-    # ordinary bars[-4] offset applies.
-    limit_index = -3 if context.get("mode") == "intraday" else -4
-    limit_up_bar = bars[limit_index]
+    limit_up_bar = bars[-4]
     raw_close = limit_up_bar.get("raw_close")
     pre_close = limit_up_bar.get("pre_close")
     if raw_close is None or pre_close is None or float(pre_close) <= 0:
