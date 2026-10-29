@@ -43,7 +43,7 @@ table { width:100%; border-collapse:collapse; font-size:14px; } th,td { border-b
 .rule-choice-main { display:grid; flex:1; gap:6px; min-width:0; padding:15px; border:0; border-radius:0; text-align:left; font-weight:400; }
 .rule-choice-main > span:last-child { color:var(--muted); line-height:1.5; } .rule-choice-heading { display:flex; align-items:center; gap:8px; } .rule-choice-heading strong { font-size:16px; }
 .category-tag { display:inline-block; padding:1px 7px; border-radius:99px; font-size:12px; line-height:1.5; font-weight:700; } .category-tag.preset { color:#335a85; background:#e7f0fb; } .category-tag.custom { color:#08705d; background:#dcf7ed; }
-.rule-choice-actions { display:flex; align-items:center; gap:7px; padding:10px 12px 10px 0; } .rule-choice-actions button { padding:6px 10px; font-size:13px; } .danger-button { color:#b42318; border-color:#e6a7a0; }
+.rule-choice-actions { display:flex; align-items:center; gap:7px; padding:10px 12px 10px 0; } .rule-choice-actions button { padding:6px 10px; font-size:13px; } .danger-button { color:#b42318; border-color:#e6a7a0; padding: 6px 14px; }
 .rule-modal { position:relative; } .inline-dialog-backdrop { position:fixed; inset:0; z-index:30; display:flex; align-items:center; justify-content:center; padding:20px; overflow-y:auto; overscroll-behavior:contain; background:rgb(15 28 48 / 36%); }
 .inline-dialog { width:min(390px,100%); padding:20px; border-radius:12px; background:#fff; box-shadow:0 18px 54px rgb(15 28 48 / 30%); }
 .inline-dialog h3 { margin:0 0 14px; font-size:18px; } .inline-dialog p { margin:0; color:var(--ink); }
