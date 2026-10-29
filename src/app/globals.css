@@ -55,3 +55,10 @@ table { width:100%; border-collapse:collapse; font-size:14px; } th,td { border-b
 .screening-loading { display:flex; align-items:center; justify-content:center; gap:10px; min-height:104px; color:var(--muted); font-weight:700; }
 .loading-spinner { width:24px; height:24px; border:3px solid #cbd8e8; border-top-color:#0f766e; border-radius:50%; animation:screening-spin .7s linear infinite; }
 @keyframes screening-spin { to { transform:rotate(360deg); } }
+.history-watchlist-link { margin-left:auto; }
+.chart-window-with-add { height:min(80vh,610px); }
+.watchlist-add-area { display:flex; flex:none; align-items:center; justify-content:flex-end; gap:10px; min-height:38px; margin-top:8px; color:var(--muted); font-size:13px; }
+.watchlist-add-area button { padding:6px 13px; }
+.username-gate { z-index:1000; }
+.username-gate .inline-dialog p { margin-bottom:14px; }
+.form-error { color:#b42318; }

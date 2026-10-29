@@ -2,7 +2,7 @@
 
 ## 1. 架构概览
 
-项目以单机本地部署为目标。浏览器只与 Next.js 通信；Next.js 负责页面、HTTP API、任务创建和结果读取；Python Worker 负责耗时的数据与计算工作；两端通过同一个 SQLite 数据库和文件化收藏方案协作。
+项目以单机本地部署为目标。浏览器只与 Next.js 通信；Next.js 负责页面、HTTP API、任务创建和结果读取；Python Worker 负责耗时的数据与计算工作；两端通过同一个 SQLite 数据库协作。
 
 ```text
 浏览器
@@ -22,7 +22,7 @@ Python Quant Worker
   └─ 写入任务状态和筛选结果
           │
           ▼
-SQLite + 收藏 JSON 文件
+SQLite
 ```
 
 ## 2. 技术边界
@@ -59,7 +59,7 @@ src/
   server/                        Worker 启动、收藏与预设服务
 quant_worker/
   providers/                     Tushare、AKShare 等 Provider
-  strategy_rules/                预设、自定义条件和收藏 JSON
+  strategy_rules/                预设与自定义条件执行逻辑；旧收藏 JSON 留作备份
   services.py                    同步、复权、指标相关服务
   worker.py                      任务领取与执行
 drizzle/                         SQL migration
@@ -79,7 +79,7 @@ scripts/dev.mjs                  本地开发服务器启动脚本
 ### 4.2 筛选
 
 1. 页面将预设 ID 或自定义 JSON 定义提交到 `POST /api/screening-runs`。
-2. API 校验请求；收藏条件由服务端从 JSON 文件读取并编译。
+2. API 校验请求；收藏条件由服务端按用户名从 SQLite 读取并编译。
 3. Worker 执行条件，写入筛选运行记录和结果。
 4. 页面读取 `GET /api/screening-runs/:id` 并显示命中项。
 
@@ -87,7 +87,7 @@ Worker 将“条件不满足”和“数据不可用”分别写为 `not_matched
 
 ### 4.3 自定义收藏
 
-收藏不是数据库表记录，而是 `quant_worker/strategy_rules/collections/custom-*.json` 文件。Next.js 服务端模块负责创建、更新、删除和读取；Worker 只接收编译后的条件定义。
+收藏保存在 SQLite 的 `user_custom_collections` 表，`config_json` 保留完整配置。旧 `custom-*.json` 文件首次访问时迁入用户名 `zerol`，原文件保留作备份；Worker 只接收编译后的条件定义。每日自选使用 `daily_watchlists` 和 `daily_watchlist_stocks` 表，按用户名与日期隔离。
 
 ## 5. 主要持久化对象
 
@@ -101,6 +101,8 @@ Worker 将“条件不满足”和“数据不可用”分别写为 `not_matched
 | `sync_jobs`                            | 同步与筛选的异步任务   |
 | `screening_rules`                      | 内置规则元数据         |
 | `screening_runs` / `screening_results` | 筛选运行与结果         |
+| `user_custom_collections`              | 按用户名保存自定义条件 |
+| `daily_watchlists` / `daily_watchlist_stocks` | 每日自选记录 |
 | `sync_audit_logs`                      | 同步审计日志           |
 
 ## 6. Worker 运行模式

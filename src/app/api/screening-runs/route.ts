@@ -5,7 +5,9 @@ import { z } from "zod";
 import { rawDb } from "@/db/client";
 import { getDashboardStatus } from "@/server/dashboard";
 import { launchWorkerOnce } from "@/server/worker-launcher";
-import { collectionDefinition, getCustomCollection } from "@/server/custom-collections";
+import { collectionDefinition } from "@/server/custom-collections";
+import { getUserCollection } from "@/server/user-collections";
+import { usernameFromRequest } from "@/server/username";
 
 const requestSchema = z.object({
   ruleId: z.string().min(1),
@@ -20,9 +22,11 @@ const requestSchema = z.object({
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
+  const username = usernameFromRequest(request);
+  if (!username) return NextResponse.json({ error: "请输入用户名" }, { status: 400 });
   const parsed = requestSchema.safeParse(await request.json());
   if (!parsed.success) return NextResponse.json({ error: "筛选参数无效" }, { status: 400 });
-  const collection = parsed.data.ruleId.startsWith("custom-") && parsed.data.ruleId !== "custom-rule" ? await getCustomCollection(parsed.data.ruleId) : null;
+  const collection = parsed.data.ruleId.startsWith("custom-") && parsed.data.ruleId !== "custom-rule" ? await getUserCollection(username, parsed.data.ruleId) : null;
   if (parsed.data.ruleId.startsWith("custom-") && parsed.data.ruleId !== "custom-rule" && !collection) return NextResponse.json({ error: "收藏不存在" }, { status: 404 });
   const actualRuleId = collection ? "custom-rule" : parsed.data.ruleId;
   const actualDefinition = collection ? collectionDefinition(collection.config) : parsed.data.definition;

@@ -4,15 +4,26 @@ import { useEffect, useRef, useState } from "react";
 
 import type { ScreeningResult, StockBar } from "../lib/types";
 
-export function ScreeningResults({ result }: { result: ScreeningResult }) {
+export function ScreeningResults({ result, username, ruleTitle, chartOnly = false, initialStock, onClose }: {
+  result: ScreeningResult;
+  username: string;
+  ruleTitle: string;
+  chartOnly?: boolean;
+  initialStock?: { code: string; name: string };
+  onClose?: () => void;
+}) {
   const [stock, setStock] = useState<{ code: string; name: string } | null>(
-    null,
+    initialStock ?? null,
   );
   const [use10jqka, setUse10jqka] = useState(false);
   const [quote, setQuote] = useState<{
     price: number;
     changePercent: number;
   } | null>(null);
+  const [industry, setIndustry] = useState<string | null>(null);
+  const [industryReady, setIndustryReady] = useState(false);
+  const [addMessage, setAddMessage] = useState("");
+  const [adding, setAdding] = useState(false);
   const [position, setPosition] = useState({ x: 80, y: 80 });
   const drag = useRef<{
     x: number;
@@ -28,7 +39,25 @@ export function ScreeningResults({ result }: { result: ScreeningResult }) {
 
   useEffect(() => {
     setQuote(null);
+    setIndustry(null);
+    setIndustryReady(false);
+    setAddMessage("");
   }, [stock?.code]);
+
+  async function addToWatchlist() {
+    if (!stock || adding) return;
+    setAdding(true);
+    try {
+      const response = await fetch("/api/watchlists", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-quant-username": username },
+        body: JSON.stringify({ stockCode: stock.code, ruleTitle, industry }),
+      });
+      const data = await response.json() as { status?: string; error?: string };
+      setAddMessage(response.ok ? data.status === "exists" ? "今日已添加" : "已添加到今日自选" : data.error ?? "添加失败");
+    } catch { setAddMessage("添加失败，请重试"); }
+    finally { setAdding(false); }
+  }
 
   function beginDrag(event: React.PointerEvent<HTMLDivElement>) {
     drag.current = {
@@ -54,7 +83,7 @@ export function ScreeningResults({ result }: { result: ScreeningResult }) {
 
   return (
     <>
-      <section className="panel">
+      {!chartOnly && <section className="panel">
         <div className="result-panel-header">
           <h2>筛选结果</h2>
           <div className="result-actions">
@@ -134,10 +163,10 @@ export function ScreeningResults({ result }: { result: ScreeningResult }) {
             })}
           </tbody>
         </table>
-      </section>
+      </section>}
       {stock && (
         <section
-          className="chart-window"
+          className={chartOnly ? "chart-window" : "chart-window chart-window-with-add"}
           style={{ left: position.x, top: position.y }}
         >
           <div
@@ -189,14 +218,14 @@ export function ScreeningResults({ result }: { result: ScreeningResult }) {
               </button>
               <button
                 onPointerDown={(event) => event.stopPropagation()}
-                onClick={() => setStock(null)}
+                onClick={() => { setStock(null); onClose?.(); }}
               >
                 关闭
               </button>
             </div>
           </div>
           <div className="chart-window-body">
-            <LocalKline code={stock.code} onQuote={setQuote} />
+            <LocalKline code={stock.code} onQuote={setQuote} onIndustry={(value) => { setIndustry(value); setIndustryReady(true); }} />
             <div className="chart-navigation">
               <button
                 disabled={stockIndex <= 0}
@@ -221,6 +250,12 @@ export function ScreeningResults({ result }: { result: ScreeningResult }) {
                 下一个
               </button>
             </div>
+            {!chartOnly && (
+              <div className="watchlist-add-area">
+                {addMessage && <span role="status">{addMessage}</span>}
+                <button onClick={addToWatchlist} disabled={adding || !industryReady}>添加</button>
+              </div>
+            )}
           </div>
         </section>
       )}
@@ -251,9 +286,11 @@ function shortDetail(detail: string) {
 function LocalKline({
   code,
   onQuote,
+  onIndustry,
 }: {
   code: string;
   onQuote: (quote: { price: number; changePercent: number } | null) => void;
+  onIndustry: (industry: string | null) => void;
 }) {
   const [bars, setBars] = useState<StockBar[] | null>(null);
   const [stockInfo, setStockInfo] = useState<
@@ -297,15 +334,19 @@ function LocalKline({
 
   useEffect(() => {
     setStockInfo(undefined);
+    let cancelled = false;
     void fetch(`/api/stocks/${code}/limit-up-reason`, { cache: "no-store" })
       .then((response) => (response.ok ? response.json() : null))
-      .then((data) =>
+      .then((data) => {
+        if (cancelled) return;
+        onIndustry(data?.industry ?? null);
         setStockInfo({
           reason: data?.reason ?? null,
           industry: data?.industry ?? null,
-        }),
-      )
-      .catch(() => setStockInfo({ reason: null, industry: null }));
+        });
+      })
+      .catch(() => { if (!cancelled) { setStockInfo({ reason: null, industry: null }); onIndustry(null); } });
+    return () => { cancelled = true; };
   }, [code]);
 
   useEffect(() => {

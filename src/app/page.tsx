@@ -12,6 +12,7 @@ import {
 import { CustomEditor } from "./components/custom-editor";
 import { RuleSelector } from "./components/rule-selector";
 import { ScreeningResults } from "./components/screening-results";
+import { UsernameGate, useUsername } from "./components/username-gate";
 import { Metric, Progress } from "./components/status-widgets";
 import {
   buildCustomDefinition,
@@ -30,12 +31,14 @@ import type {
 } from "./lib/types";
 
 export default function HomePage() {
+  const { username, loaded: usernameLoaded, save: saveUsername } = useUsername();
   const [status, setStatus] = useState<Status>(emptyStatus);
   const [message, setMessage] = useState("正在加载数据概览…");
   const [busy, setBusy] = useState(false);
   const [screeningLoading, setScreeningLoading] = useState(false);
   const [job, setJob] = useState<Job | null>(null);
   const [result, setResult] = useState<ScreeningResult | null>(null);
+  const [resultRuleTitle, setResultRuleTitle] = useState("");
   const [choices, setChoices] = useState<RuleChoice[]>([]);
   const [selected, setSelected] = useState<RuleChoice | null>(null);
   const [selectorOpen, setSelectorOpen] = useState(false);
@@ -58,9 +61,11 @@ export default function HomePage() {
   }, []);
 
   const loadChoices = useCallback(async () => {
+    if (!username) return;
     try {
       const response = await fetch("/api/screening-rules", {
         cache: "no-store",
+        headers: { "x-quant-username": username },
       });
       if (!response.ok) return;
       const payload = (await response.json()) as {
@@ -96,7 +101,7 @@ export default function HomePage() {
     } catch {
       setChoices([]);
     }
-  }, []);
+  }, [username]);
 
   useEffect(() => {
     void refresh().then((loaded) =>
@@ -104,8 +109,9 @@ export default function HomePage() {
         loaded ? "数据概览已加载！" : "数据概览加载失败，请刷新页面重试。",
       ),
     );
-    void loadChoices();
-  }, [loadChoices, refresh]);
+  }, [refresh]);
+
+  useEffect(() => { if (username) void loadChoices(); }, [username, loadChoices]);
 
   useLayoutEffect(() => {
     const button = document.querySelector<HTMLButtonElement>(
@@ -177,6 +183,7 @@ export default function HomePage() {
 
   async function runScreening() {
     if (
+      !username ||
       !selected ||
       (selected.id === "custom-rule" &&
         customDefinition.conditions.length === 0)
@@ -185,11 +192,12 @@ export default function HomePage() {
     setBusy(true);
     setScreeningLoading(true);
     setResult(null);
+    setResultRuleTitle(selected.title);
     setJob({ status: "queued", progressCurrent: 0, progressTotal: 0 });
     setMessage(`正在按“${selected.title}”筛选…`);
     const response = await fetch("/api/screening-runs", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "x-quant-username": username },
       body: JSON.stringify({
         ruleId: selected.id,
         mode: "intraday",
@@ -259,6 +267,7 @@ export default function HomePage() {
   }
 
   async function saveCollection(title: string): Promise<boolean> {
+    if (!username) return false;
     const name = title.trim();
     if (!name) return false;
     const response = await fetch(
@@ -267,7 +276,7 @@ export default function HomePage() {
         : "/api/custom-rules",
       {
         method: editingCollectionId ? "PUT" : "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", "x-quant-username": username },
         body: JSON.stringify({ config: customDraft, title: name }),
       },
     );
@@ -282,9 +291,10 @@ export default function HomePage() {
 
   async function confirmCustom(): Promise<boolean> {
     if (editingCollectionId) {
+      if (!username) return false;
       const response = await fetch(`/api/custom-rules/${editingCollectionId}`, {
         method: "PUT",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", "x-quant-username": username },
         body: JSON.stringify({ config: customDraft }),
       });
       if (!response.ok) {
@@ -316,8 +326,10 @@ export default function HomePage() {
   }
 
   async function deleteCollection(choice: RuleChoice): Promise<boolean> {
+    if (!username) return false;
     const response = await fetch(`/api/custom-rules/${choice.id}`, {
       method: "DELETE",
+      headers: { "x-quant-username": username },
     });
     if (!response.ok) {
       setMessage("删除失败，请重试。");
@@ -356,6 +368,7 @@ export default function HomePage() {
         <button onClick={startSync} disabled={busy}>
           同步历史与今日数据
         </button>
+        <Link className="button-link history-watchlist-link" href="/watchlists">历史自选记录</Link>
         <button
           className="primary"
           onClick={runScreening}
@@ -401,7 +414,8 @@ export default function HomePage() {
           <span>正在筛选…</span>
         </div>
       )}
-      {result && <ScreeningResults result={result} />}
+      {result && username && <ScreeningResults result={result} username={username} ruleTitle={resultRuleTitle} />}
+      {usernameLoaded && !username && <UsernameGate onSave={saveUsername} />}
       {selectorOpen && (
         <RuleSelector
           choices={choices}

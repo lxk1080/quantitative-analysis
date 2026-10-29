@@ -145,6 +145,9 @@ MA5 为橙色、MA10 为紫色、MA60 为蓝色、DKX 为黑色实线。每条�
 | `GET`        | `/api/screening-runs/:id/export` | 导出 EBK               |
 | `GET/POST`   | `/api/custom-rules`              | 创建、列出收藏条件     |
 | `PUT/DELETE` | `/api/custom-rules/:id`          | 更新、删除收藏条件     |
+| `GET/POST`   | `/api/watchlists`                | 日期列表、添加自选股票 |
+| `GET/DELETE` | `/api/watchlists/:date`          | 当日明细、删除整日记录 |
+| `DELETE`    | `/api/watchlists/:date/:code`    | 删除单只自选股票       |
 | `GET`        | `/api/stocks`                    | 股票搜索与分页         |
 | `GET`        | `/api/stocks/:code`              | 个股日线和指标         |
 
@@ -164,7 +167,8 @@ python -m quant_worker.cli worker
 - 日线保留数为 `RETAINED_TRADING_DAYS = 90`。
 - 前端只读 SQLite，不在浏览器中更新市场数据。
 - 实时快照不写入正式日线；盘中筛选上下文将实时价格与历史数据组合。
-- 收藏 JSON 由 Next.js 服务端文件模块读写，文件名必须符合安全 ID 格式。
+- 自定义收藏与每日自选按用户名存入 SQLite；用户名保存在浏览器 localStorage 的 `__quant-analysis-username__` 中。
+- 旧收藏 JSON 首次访问时迁给 `zerol`，保留原文件作为备份。
 
 ## 6. 启动与验证
 

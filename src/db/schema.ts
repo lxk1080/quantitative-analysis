@@ -101,3 +101,28 @@ export const screeningResults = sqliteTable("screening_results", {
   currentPrice: real("current_price"),
   detailJson: text("detail_json").notNull(),
 }, (table) => [primaryKey({ columns: [table.runId, table.stockCode] })]);
+
+export const userCustomCollections = sqliteTable("user_custom_collections", {
+  username: text("username").notNull(),
+  id: text("id").notNull(),
+  title: text("title").notNull(),
+  configJson: text("config_json").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+}, (table) => [primaryKey({ columns: [table.username, table.id] }), index("user_custom_collections_updated_idx").on(table.username, table.updatedAt)]);
+
+export const dailyWatchlists = sqliteTable("daily_watchlists", {
+  username: text("username").notNull(),
+  selectedDate: text("selected_date").notNull(),
+  createdAt: text("created_at").notNull(),
+}, (table) => [primaryKey({ columns: [table.username, table.selectedDate] })]);
+
+export const dailyWatchlistStocks = sqliteTable("daily_watchlist_stocks", {
+  username: text("username").notNull(),
+  selectedDate: text("selected_date").notNull(),
+  stockCode: text("stock_code").notNull(),
+  stockName: text("stock_name").notNull(),
+  ruleTitle: text("rule_title").notNull(),
+  industry: text("industry"),
+  addedAt: text("added_at").notNull(),
+}, (table) => [primaryKey({ columns: [table.username, table.selectedDate, table.stockCode] })]);
