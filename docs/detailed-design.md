@@ -129,6 +129,8 @@ MA5 为橙色、MA10 为紫色、MA60 为蓝色、DKX 为黑色实线。每条�
 
 ## 4. 任务与 API
 
+筛选结果有 `matched`、`not_matched`、`unavailable` 三种状态。`unavailable` 的直接原因是本次筛选缺少有效的盘中报价/前复权价格，或缺少规则所需的历史日线和指标。可能的外部成因包括停牌、行情源漏报或异常。Worker 在 `screening_results.detail_json` 中记录原因或条件消息，结果页当前只展示命中股票及不可用总数，EBK 也只导出命中股票。
+
 ### 4.1 API
 
 | 方法         | 路径                             | 说明                   |

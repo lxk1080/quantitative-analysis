@@ -83,6 +83,8 @@ scripts/dev.mjs                  本地开发服务器启动脚本
 3. Worker 执行条件，写入筛选运行记录和结果。
 4. 页面读取 `GET /api/screening-runs/:id` 并显示命中项。
 
+Worker 将“条件不满足”和“数据不可用”分别写为 `not_matched`、`unavailable`。盘中若没有该股票的有效快照报价或无法构建前复权价格，或者历史数据/指标不足以计算规则，结果为 `unavailable`。结果页汇总不可用数量，命中列表与 EBK 导出只使用 `matched`。
+
 ### 4.3 自定义收藏
 
 收藏不是数据库表记录，而是 `quant_worker/strategy_rules/collections/custom-*.json` 文件。Next.js 服务端模块负责创建、更新、删除和读取；Worker 只接收编译后的条件定义。
