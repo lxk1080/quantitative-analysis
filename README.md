@@ -68,6 +68,14 @@ npm run test:web        # Web 测试
 npm run build           # TypeScript 与生产构建校验
 ```
 
+需要可视化查看 SQLite 数据时，在项目根目录运行：
+
+```powershell
+npx drizzle-kit studio
+```
+
+按终端提示打开 Drizzle Studio，即可浏览数据库。默认读取 `data/quant.db`。
+
 ## 自定义条件
 
 同一个自定义方案中的已勾选条件按 AND 关系同时满足。当前支持：
