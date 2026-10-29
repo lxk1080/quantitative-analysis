@@ -64,7 +64,7 @@ def run_screening(connection: sqlite3.Connection, payload: dict[str, Any], job_i
     include_st = rule_id == "custom-rule" and not any(item.get("type") == "exclude_st" for item in conditions if isinstance(item, dict))
     # A screening task is self-sufficient: backfill history first, then use a
     # configured intraday cache or the authoritative daily data when available.
-    mode, intraday_prices = ensure_screening_data(connection, job_id, int(payload.get("max_workers", 4)), include_st=include_st)
+    mode, intraday_prices = ensure_screening_data(connection, job_id, int(payload.get("max_workers", 4)), include_st=include_st, use_existing_realtime=payload.get("use_existing_realtime") is True)
     latest_date = connection.execute("SELECT MAX(trade_date) AS value FROM daily_bars").fetchone()["value"]
     if latest_date is None:
         raise ValueError("no daily bars available")

@@ -230,7 +230,7 @@ def _snapshot_from_json(payload: dict[str, object]) -> list[MarketSnapshotBarInp
     return result
 
 
-def _load_fresh_snapshot(*, freeze_after_close: bool) -> list[MarketSnapshotBarInput] | None:
+def _load_fresh_snapshot(*, freeze_after_close: bool, allow_stale_today: bool = False) -> list[MarketSnapshotBarInput] | None:
     if not CACHE_PATH.exists():
         return None
     now = datetime.now(UTC)
@@ -244,12 +244,12 @@ def _load_fresh_snapshot(*, freeze_after_close: bool) -> list[MarketSnapshotBarI
             captured_local = captured.astimezone(ZoneInfo(SHANGHAI_TIMEZONE))
             if captured_local.date() != today:
                 continue
-            if freeze_after_close:
+            if not allow_stale_today and freeze_after_close:
                 # A 15:00+ cache is the one immutable close snapshot used until
                 # Tushare becomes the authoritative source at 16:00.
                 if captured_local.time() < time(15, 0):
                     continue
-            elif (now - captured.astimezone(UTC)).total_seconds() > REALTIME_CACHE_TTL_SECONDS:
+            elif not allow_stale_today and (now - captured.astimezone(UTC)).total_seconds() > REALTIME_CACHE_TTL_SECONDS:
                 continue
             snapshot = _snapshot_from_json(payload)
             if snapshot:
@@ -278,12 +278,12 @@ def _prune_snapshot_cache() -> None:
             continue
 
 
-def _get_intraday_snapshot(connection: sqlite3.Connection, job_id: str, provider: AkshareProvider) -> tuple[list[MarketSnapshotBarInput], bool]:
+def _get_intraday_snapshot(connection: sqlite3.Connection, job_id: str, provider: AkshareProvider, *, use_existing_today: bool = False) -> tuple[list[MarketSnapshotBarInput], bool]:
     local_time = datetime.now(ZoneInfo(SHANGHAI_TIMEZONE)).time()
     frozen_close = local_time >= time(15, 0)
-    cached = _load_fresh_snapshot(freeze_after_close=frozen_close)
+    cached = _load_fresh_snapshot(freeze_after_close=frozen_close, allow_stale_today=use_existing_today)
     if cached:
-        policy = "frozen after-close snapshot" if frozen_close else "snapshot younger than 10 minutes"
+        policy = "latest available snapshot from today" if use_existing_today else "frozen after-close snapshot" if frozen_close else "snapshot younger than 10 minutes"
         _write_audit(connection, job_id, "realtime_cache_hit", f"reused {len(cached)} records: {policy}", cached[0].provider_name)
         return cached, True
     snapshot = provider.fetch_market_snapshot()
@@ -367,7 +367,7 @@ def sync_realtime_quotes(connection: sqlite3.Connection, job_id: str, max_worker
     return result
 
 
-def ensure_screening_data(connection: sqlite3.Connection, job_id: str, max_workers: int = 4, *, include_st: bool = False) -> tuple[str, dict[str, dict[str, float]]]:
+def ensure_screening_data(connection: sqlite3.Connection, job_id: str, max_workers: int = 4, *, include_st: bool = False, use_existing_realtime: bool = False) -> tuple[str, dict[str, dict[str, float]]]:
     codes = _local_active_codes(connection, include_st=include_st)
     provider: AkshareProvider | None = None
     if not codes or include_st:
@@ -386,13 +386,13 @@ def ensure_screening_data(connection: sqlite3.Connection, job_id: str, max_worke
             # Tushare has finished publishing today's daily endpoint.
             if provider is None:
                 provider = AkshareProvider(max_workers=max_workers)
-            snapshot, _ = _get_intraday_snapshot(connection, job_id, provider)
+            snapshot, _ = _get_intraday_snapshot(connection, job_id, provider, use_existing_today=use_existing_realtime)
             mode, prices = "intraday", _snapshot_qfq_prices(connection, snapshot, set(codes))
     else:
         sync_history_if_needed(connection, job_id, codes, include_st=include_st)
         if provider is None:
             provider = AkshareProvider(max_workers=max_workers)
-        snapshot, _ = _get_intraday_snapshot(connection, job_id, provider)
+        snapshot, _ = _get_intraday_snapshot(connection, job_id, provider, use_existing_today=use_existing_realtime)
         mode, prices = "intraday", _snapshot_qfq_prices(connection, snapshot, set(codes))
     if provider is not None:
         _write_provider_summary(connection, job_id, provider)

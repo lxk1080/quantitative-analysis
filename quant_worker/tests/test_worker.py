@@ -13,6 +13,23 @@ from quant_worker.worker import process_one_job
 
 
 class WorkerTests(unittest.TestCase):
+    def test_screening_passes_snapshot_reuse_choice_to_data_service(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            connection = connect(Path(directory) / "quant.db")
+            try:
+                apply_migrations(connection)
+                seed_demo_data(connection)
+                connection.execute(
+                    """INSERT INTO sync_jobs(id, kind, payload_json, status, created_at)
+                       VALUES ('reuse-job', 'screening', ?, 'queued', '2025-01-01T00:00:00+00:00')""",
+                    (json.dumps({"rule_id": "demo-trend-rule", "use_existing_realtime": True}),),
+                )
+                with patch("quant_worker.worker.ensure_screening_data", return_value=("post_close", {})) as ensure:
+                    self.assertTrue(process_one_job(connection))
+                self.assertTrue(ensure.call_args.kwargs["use_existing_realtime"])
+            finally:
+                connection.close()
+
     def test_demo_data_is_retained_and_screened_through_a_job(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             connection = connect(Path(directory) / "quant.db")

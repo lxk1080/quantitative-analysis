@@ -121,7 +121,7 @@ export default function WatchlistsPage() {
         <section className="panel">
           <h2>每日自选</h2>
           {days.length ? (
-            <table>
+            <table className="watchlist-table">
               <thead>
                 <tr>
                   <th>选股日期</th>
@@ -170,7 +170,7 @@ export default function WatchlistsPage() {
               返回日期列表
             </button>
           </div>
-          <table>
+          <table className="watchlist-table">
             <thead>
               <tr>
                 <th>股票代码</th>

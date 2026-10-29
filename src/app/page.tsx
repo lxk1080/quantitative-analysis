@@ -36,6 +36,7 @@ export default function HomePage() {
   const [message, setMessage] = useState("正在加载数据概览…");
   const [busy, setBusy] = useState(false);
   const [screeningLoading, setScreeningLoading] = useState(false);
+  const [useExistingRealtime, setUseExistingRealtime] = useState(false);
   const [job, setJob] = useState<Job | null>(null);
   const [result, setResult] = useState<ScreeningResult | null>(null);
   const [resultRuleTitle, setResultRuleTitle] = useState("");
@@ -201,6 +202,7 @@ export default function HomePage() {
       body: JSON.stringify({
         ruleId: selected.id,
         mode: "intraday",
+        useExistingRealtime,
         definition:
           selected.id === "custom-rule" ? customDefinition : undefined,
       }),
@@ -398,6 +400,15 @@ export default function HomePage() {
               自定义条件
             </button>
           </div>
+          <label className="chart-source-toggle existing-realtime-toggle">
+            <input
+              type="checkbox"
+              checked={useExistingRealtime}
+              onChange={(event) => setUseExistingRealtime(event.target.checked)}
+              disabled={busy}
+            />
+            使用已有的实时数据
+          </label>
         </div>
         {selected ? (
           <div className="selected-rule">

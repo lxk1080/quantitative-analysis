@@ -12,6 +12,7 @@ import { usernameFromRequest } from "@/server/username";
 const requestSchema = z.object({
   ruleId: z.string().min(1),
   mode: z.enum(["post_close", "intraday"]).default("post_close"),
+  useExistingRealtime: z.boolean().default(false),
   definition: z.object({
     version: z.number().int().optional(),
     operator: z.literal("all"),
@@ -38,7 +39,7 @@ export async function POST(request: Request) {
   const now = new Date().toISOString();
   rawDb.prepare(
     "INSERT INTO sync_jobs(id, kind, payload_json, status, created_at) VALUES (?, 'screening', ?, 'queued', ?)",
-  ).run(id, JSON.stringify({ rule_id: actualRuleId, rule_title: collection?.title, mode: parsed.data.mode, definition: actualDefinition }), now);
+  ).run(id, JSON.stringify({ rule_id: actualRuleId, rule_title: collection?.title, mode: parsed.data.mode, definition: actualDefinition, use_existing_realtime: parsed.data.useExistingRealtime }), now);
   launchWorkerOnce();
   return NextResponse.json({ jobId: id }, { status: 202 });
 }

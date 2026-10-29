@@ -167,6 +167,7 @@ python -m quant_worker.cli worker
 - 日线保留数为 `RETAINED_TRADING_DAYS = 90`。
 - 前端只读 SQLite，不在浏览器中更新市场数据。
 - 实时快照不写入正式日线；盘中筛选上下文将实时价格与历史数据组合。
+- 筛选任务的 `use_existing_realtime` 仅改变盘中快照复用策略：启用时可使用当天最新快照（不受 10 分钟时效及 15:00 收盘快照门槛限制），当天无可用快照时仍会拉取；未启用时沿用原缓存规则。正式盘后日线优先级、手动实时同步和 K 线读取逻辑不变。
 - 自定义收藏与每日自选按用户名存入 SQLite；用户名保存在浏览器 localStorage 的 `__quant-analysis-username__` 中。
 - 旧收藏 JSON 首次访问时迁给 `zerol`，保留原文件作为备份。
 
