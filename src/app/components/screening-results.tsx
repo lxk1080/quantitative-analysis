@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { Toast } from "./dialogs";
 import type { ScreeningResult, StockBar } from "../lib/types";
 
 export function ScreeningResults({ result, username, ruleTitle, chartOnly = false, initialStock, onClose }: {
@@ -23,6 +24,7 @@ export function ScreeningResults({ result, username, ruleTitle, chartOnly = fals
   const [industry, setIndustry] = useState<string | null>(null);
   const [industryReady, setIndustryReady] = useState(false);
   const [addMessage, setAddMessage] = useState("");
+  const [addError, setAddError] = useState(false);
   const [adding, setAdding] = useState(false);
   const [position, setPosition] = useState({ x: 80, y: 80 });
   const drag = useRef<{
@@ -44,6 +46,12 @@ export function ScreeningResults({ result, username, ruleTitle, chartOnly = fals
     setAddMessage("");
   }, [stock?.code]);
 
+  useEffect(() => {
+    if (!addMessage) return;
+    const timer = window.setTimeout(() => setAddMessage(""), 3000);
+    return () => window.clearTimeout(timer);
+  }, [addMessage]);
+
   async function addToWatchlist() {
     if (!stock || adding) return;
     setAdding(true);
@@ -54,8 +62,9 @@ export function ScreeningResults({ result, username, ruleTitle, chartOnly = fals
         body: JSON.stringify({ stockCode: stock.code, ruleTitle, industry }),
       });
       const data = await response.json() as { status?: string; error?: string };
+      setAddError(!response.ok);
       setAddMessage(response.ok ? data.status === "exists" ? "今日已添加" : "已添加到今日自选" : data.error ?? "添加失败");
-    } catch { setAddMessage("添加失败，请重试"); }
+    } catch { setAddError(true); setAddMessage("添加失败，请重试"); }
     finally { setAdding(false); }
   }
 
@@ -166,7 +175,7 @@ export function ScreeningResults({ result, username, ruleTitle, chartOnly = fals
       </section>}
       {stock && (
         <section
-          className={chartOnly ? "chart-window" : "chart-window chart-window-with-add"}
+          className="chart-window"
           style={{ left: position.x, top: position.y }}
         >
           <div
@@ -227,6 +236,9 @@ export function ScreeningResults({ result, username, ruleTitle, chartOnly = fals
           <div className="chart-window-body">
             <LocalKline code={stock.code} onQuote={setQuote} onIndustry={(value) => { setIndustry(value); setIndustryReady(true); }} />
             <div className="chart-navigation">
+              <span className="chart-position" aria-label={`第 ${stockIndex + 1} 只，共 ${result.results.length} 只`}>
+                {String(stockIndex + 1).padStart(2, "0")}/{String(result.results.length).padStart(2, "0")}
+              </span>
               <button
                 disabled={stockIndex <= 0}
                 onClick={() => {
@@ -249,16 +261,12 @@ export function ScreeningResults({ result, username, ruleTitle, chartOnly = fals
               >
                 下一个
               </button>
+              {!chartOnly && <button className="chart-add-button" onClick={addToWatchlist} disabled={adding || !industryReady}>添加</button>}
             </div>
-            {!chartOnly && (
-              <div className="watchlist-add-area">
-                {addMessage && <span role="status">{addMessage}</span>}
-                <button onClick={addToWatchlist} disabled={adding || !industryReady}>添加</button>
-              </div>
-            )}
           </div>
         </section>
       )}
+      {addMessage && <Toast message={addMessage} kind={addError ? "error" : "success"} />}
     </>
   );
 }

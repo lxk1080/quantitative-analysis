@@ -86,9 +86,9 @@ export function ConfirmDialog({
   );
 }
 
-export function Toast({ message }: { message: string }) {
+export function Toast({ message, kind = "success" }: { message: string; kind?: "success" | "error" }) {
   return (
-    <div className="toast" role="status">
+    <div className={`toast${kind === "error" ? " toast-error" : ""}`} role="status">
       {message}
     </div>
   );
