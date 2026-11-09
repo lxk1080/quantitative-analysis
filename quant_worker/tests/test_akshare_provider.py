@@ -46,6 +46,18 @@ class FakeSinaOnly(FakeAkshare):
         ])
 
 
+class FakeSnapshotSina(FakeAkshare):
+    def stock_zh_a_spot_em(self):
+        raise AssertionError("Eastmoney should not be called after a valid Sina snapshot")
+
+    def stock_zh_a_spot(self):
+        return pd.DataFrame([{
+            "代码": "000001", "名称": "平安银行", "最新价": 10.5,
+            "今开": 10.0, "最高": 10.8, "最低": 9.9, "昨收": 10.1,
+            "成交量": 100, "成交额": 1000,
+        }])
+
+
 class AkshareProviderTests(unittest.TestCase):
     def setUp(self) -> None:
         self.provider = AkshareProvider(ak_client=FakeAkshare())
@@ -77,6 +89,13 @@ class AkshareProviderTests(unittest.TestCase):
         data, failures = provider.fetch_daily_bars(["000001"], date(2026, 8, 1), date(2026, 8, 31))
         self.assertEqual(failures, {})
         self.assertEqual(data["000001"][0].provider_name, "akshare-sina")
+
+    def test_complete_snapshot_prefers_sina(self) -> None:
+        provider = AkshareProvider(ak_client=FakeSnapshotSina())
+        snapshot = provider.fetch_market_snapshot()
+        self.assertEqual(len(snapshot), 1)
+        self.assertEqual(snapshot[0].provider_name, "akshare-sina")
+        self.assertEqual(provider.audit_summary()["counts"]["tencent"]["failed"], 0)
 
 
 if __name__ == "__main__":

@@ -6,7 +6,9 @@ The public endpoints behind AKShare are not interchangeable. This module keeps
 their field differences here, exposes one normalized contract to the rest of the
 application, and records the source actually used for every saved record.
 
-Price-source order: Tencent -> Eastmoney -> Sina. AKShare 1.18 has no
+General price-source order: Tencent -> Eastmoney -> Sina. Complete market
+OHLC snapshots prefer Sina because Tencent's spot table lacks OHLC fields.
+AKShare 1.18 has no
 Tonghuashun all-A realtime or individual qfq daily endpoint. Its apparent
 ``stock_ipo_ths`` "all A shares" endpoint is new-IPO data, not a security
 master, so it must not be used as a price or universe fallback.
@@ -127,7 +129,7 @@ class AkshareProvider:
         prefix = "sh" if code.startswith(("6", "9")) else "bj" if code.startswith(("4", "8")) else "sz"
         return prefix + code
 
-    def _spot_candidates(self):
+    def _spot_candidates(self, sources: tuple[str, ...] | None = None, failures: list[str] | None = None):
         loaders: dict[str, Callable[[], Any]] = {
             "tencent": self._ak.stock_zh_a_spot_tx,
             "eastmoney": self._ak.stock_zh_a_spot_em,
@@ -135,14 +137,17 @@ class AkshareProvider:
         }
         errors: list[str] = []
         yielded = False
-        for source in self._SPOT_SOURCES:
+        for source in sources or self._SPOT_SOURCES:
             try:
                 records = self._records(loaders[source]())
                 yielded = True
                 yield source, records
             except Exception as error:
                 self._count(source, "failed")
-                errors.append(f"{source}: {error}")
+                detail = f"{source}: {type(error).__name__}: {str(error)[:180]}"
+                errors.append(detail)
+                if failures is not None:
+                    failures.append(detail)
                 self._record_fallback(f"{source} spot request failed: {error}")
         if not yielded:
             raise RuntimeError("all same-contract realtime sources failed; " + " | ".join(errors))
@@ -318,16 +323,16 @@ class AkshareProvider:
     def fetch_market_snapshot(self) -> list[MarketSnapshotBarInput]:
         """Return one all-A raw OHLC snapshot with provider fallback."""
         invalid_sources: list[str] = []
-        for source, records in self._spot_candidates():
+        for source, records in self._spot_candidates(("sina", "eastmoney", "tencent"), invalid_sources):
             snapshots = self._snapshot_rows(source, records)
             if snapshots:
                 self._count(source, "realtime", len(snapshots))
-                if source != "tencent":
+                if invalid_sources:
                     self._record_fallback(f"market snapshot used {source}; earlier sources: {' | '.join(invalid_sources)}")
                 return snapshots
             self._count(source, "failed")
             invalid_sources.append(f"{source}: missing valid OHLC fields")
-        raise ValueError("all realtime sources returned no usable all-market OHLC snapshot")
+        raise ValueError("all realtime sources returned no usable all-market OHLC snapshot; " + " | ".join(invalid_sources))
 
     def fetch_realtime_quotes(self, codes: list[str]) -> tuple[list[RealtimeQuoteInput], dict[str, str]]:
         wanted = set(codes)
