@@ -21,6 +21,7 @@ from typing import Any, Callable, Iterable
 
 from quant_worker.models import DailyBarInput, MarketSnapshotBarInput, RealtimeQuoteInput, SecurityInput
 from quant_worker.providers.base import ProviderNotConfigured
+from quant_worker.providers.eastmoney_cookie import install_eastmoney_cookie
 
 
 class AkshareProvider:
@@ -31,6 +32,7 @@ class AkshareProvider:
     _DAILY_SOURCES = ("tencent", "eastmoney", "sina")
 
     def __init__(self, max_workers: int = 2, ak_client: Any | None = None) -> None:
+        install_eastmoney_cookie()
         if ak_client is None:
             try:
                 import akshare as ak

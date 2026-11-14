@@ -31,6 +31,8 @@ TUSHARE_TOKEN=你的_Tushare_Token
 
 `TUSHARE_TOKEN` 是同步历史/盘后日线的必配项。其余环境变量均有默认值；例如数据库默认使用 `data/quant.db`、Python 默认使用系统 `python`、系统代理默认关闭，可参考 `.env.example`
 
+如果东方财富行情接口在当前网络下需要浏览器 Cookie，可在 `.env.local` 中配置 `EASTMONEY_COOKIE=浏览器中的Cookie值`。Python worker 只会将它附加到东方财富域名的请求；该项可留空，腾讯和新浪请求不受影响。
+
 ## 首次启动
 
 ```powershell
